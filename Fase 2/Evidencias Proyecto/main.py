@@ -13,3 +13,11 @@ def inicio(request: Request):
         name="index.html",
         context={}
     )
+
+@app.get("/pag2")
+def segunda(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="pag2.html",
+        context={}
+    )
