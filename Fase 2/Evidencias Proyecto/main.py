@@ -29,7 +29,7 @@ def segunda(request: Request):
         context={}
     )
 
-# --- Nuevo: primera ruta conectada a la base de datos ---
+# --- conexión---
 @app.get("/asignaturas")
 def listar_asignaturas(db: Session = Depends(get_db)):
     return db.query(models.Asignatura).all()
