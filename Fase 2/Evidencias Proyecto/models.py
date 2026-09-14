@@ -1,7 +1,9 @@
 from sqlalchemy import (
     Column, Integer, SmallInteger, String, Boolean,
-    Date, DateTime, ForeignKey, Enum, UniqueConstraint, func
+    Date, DateTime, ForeignKey, Enum, CheckConstraint,
+    UniqueConstraint, func
 )
+from sqlalchemy.orm import relationship
 from database import Base
 import enum
 
@@ -17,6 +19,22 @@ class RolUsuario(str, enum.Enum):
     docente = "docente"
 
 
+class AreaDocenteTipo(str, enum.Enum):
+    informatica = "informatica"
+    redes = "redes"
+    contabilidad = "contabilidad"
+    administracion = "administracion"
+    prevencion_riesgos = "prevencion_riesgos"
+    trabajo_social = "trabajo_social"
+    diseno_grafico = "diseno_grafico"
+    turismo = "turismo"
+    gastronomia = "gastronomia"
+    enfermeria = "enfermeria"
+    matematica = "matematica"
+    lenguaje = "lenguaje"
+    ingles = "ingles"
+
+
 class Carrera(Base):
     __tablename__ = "carrera"
 
@@ -25,6 +43,28 @@ class Carrera(Base):
     nombre = Column(String(150), nullable=False)
     activo = Column(Boolean, nullable=False, default=True)
     creado_en = Column(DateTime, server_default=func.now())
+
+    planes_estudio = relationship("PlanEstudio", back_populates="carrera")
+
+
+class PlanEstudio(Base):
+    """
+    Una carrera puede tener varios planes de estudio a lo largo
+    del tiempo (cambios de malla curricular). 'vigente_hasta' en
+    NULL significa que es el plan vigente actualmente.
+    """
+    __tablename__ = "plan_estudio"
+
+    id = Column(Integer, primary_key=True)
+    carrera_id = Column(Integer, ForeignKey("carrera.id", ondelete="CASCADE"), nullable=False)
+    codigo = Column(String(30), unique=True, nullable=False)
+    nombre = Column(String(100), nullable=False)
+    vigente_desde = Column(Date, nullable=False)
+    vigente_hasta = Column(Date, nullable=True)
+    activo = Column(Boolean, nullable=False, default=True)
+
+    carrera = relationship("Carrera", back_populates="planes_estudio")
+    asignaturas = relationship("Asignatura", back_populates="plan_estudio")
 
 
 class Semestre(Base):
@@ -47,18 +87,21 @@ class Profesor(Base):
     nombre = Column(String(100), nullable=False)
     apellido = Column(String(100), nullable=False)
     email = Column(String(150), unique=True, nullable=False)
-    especialidad = Column(String(150))
+    area_docente = Column(Enum(AreaDocenteTipo), nullable=False)
     activo = Column(Boolean, nullable=False, default=True)
     creado_en = Column(DateTime, server_default=func.now())
 
 
 class Sala(Base):
     __tablename__ = "sala"
+    __table_args__ = (
+        CheckConstraint("edificio IN ('W', 'Y', 'Z')", name="ck_sala_edificio"),
+    )
 
     id = Column(Integer, primary_key=True)
-    nombre = Column(String(50), unique=True, nullable=False)
+    nombre = Column(String(50), unique=True, nullable=False)  # ej. 'W-101'
+    edificio = Column(String(1), nullable=False)
     cantidad_sillas = Column(Integer, nullable=False)
-    edificio = Column(String(100))
     piso = Column(SmallInteger)
     activo = Column(Boolean, nullable=False, default=True)
 
@@ -70,10 +113,11 @@ class Asignatura(Base):
     codigo = Column(String(20), unique=True, nullable=False)
     nombre = Column(String(150), nullable=False)
     jornada = Column(Enum(JornadaTipo), nullable=False)
-    carrera_id = Column(Integer, ForeignKey("carrera.id"), nullable=True)
-    creditos = Column(SmallInteger)
-    horas_semanales = Column(SmallInteger)
+    plan_estudio_id = Column(Integer, ForeignKey("plan_estudio.id", ondelete="SET NULL"), nullable=True)
+    horas = Column(SmallInteger)
     activo = Column(Boolean, nullable=False, default=True)
+
+    plan_estudio = relationship("PlanEstudio", back_populates="asignaturas")
 
 
 class Usuario(Base):
