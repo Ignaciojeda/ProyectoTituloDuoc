@@ -1,9 +1,16 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
+
+from database import engine, get_db, Base
+import models
 
 app = FastAPI()
 
 templates = Jinja2Templates(directory="templates")
+
+# Crea las tablas en Postgres (si no existen) al levantar el servidor
+Base.metadata.create_all(bind=engine)
 
 
 @app.get("/")
@@ -21,3 +28,8 @@ def segunda(request: Request):
         name="pag2.html",
         context={}
     )
+
+# --- Nuevo: primera ruta conectada a la base de datos ---
+@app.get("/asignaturas")
+def listar_asignaturas(db: Session = Depends(get_db)):
+    return db.query(models.Asignatura).all()
