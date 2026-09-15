@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, SmallInteger, String, Boolean,
-    Date, DateTime, ForeignKey, Enum, CheckConstraint,
+    Date, DateTime, Time, ForeignKey, Enum, CheckConstraint,
     UniqueConstraint, func
 )
 from sqlalchemy.orm import relationship
@@ -130,3 +130,34 @@ class Usuario(Base):
     rol = Column(Enum(RolUsuario), nullable=False, default=RolUsuario.coordinador)
     activo = Column(Boolean, nullable=False, default=True)
     creado_en = Column(DateTime, server_default=func.now())
+
+#NUEVO (creación de tabla bloque horario, sinoptico y sinoptico item), copiado de antes del git pull
+class BloqueHorario(Base):
+    __tablename__ = "bloque_horario"
+    __table_args__ = (UniqueConstraint("dia_semana", "hora_inicio", "jornada"),)
+
+    id = Column(Integer, primary_key=True)
+    dia_semana = Column(SmallInteger, nullable=False)  # 1=Lunes ... 6=Sábado
+    hora_inicio = Column(Time, nullable=False)
+    hora_fin = Column(Time, nullable=False)
+    jornada = Column(Enum(JornadaTipo), nullable=False)
+
+
+class Sinoptico(Base):
+    __tablename__ = "sinoptico"
+
+    id = Column(Integer, primary_key=True)
+    carrera_id = Column(Integer, ForeignKey("carrera.id"), nullable=False)
+    semestre_id = Column(Integer, ForeignKey("semestre.id"), nullable=False)
+    creado_en = Column(DateTime, server_default=func.now())
+
+
+class SinopticoItem(Base):
+    __tablename__ = "sinoptico_item"
+
+    id = Column(Integer, primary_key=True)
+    sinoptico_id = Column(Integer, ForeignKey("sinoptico.id", ondelete="CASCADE"), nullable=False)
+    asignatura_id = Column(Integer, ForeignKey("asignatura.id"), nullable=False)
+    profesor_id = Column(Integer, ForeignKey("profesor.id"))
+    sala_id = Column(Integer, ForeignKey("sala.id"))
+    bloque_horario_id = Column(Integer, ForeignKey("bloque_horario.id"), nullable=False)

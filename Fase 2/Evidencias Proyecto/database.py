@@ -12,9 +12,13 @@ DATABASE_URL = (
 
 print("Conectando con:", DATABASE_URL)
 
+connect_args = {}
+if os.getenv("DB_HOST") not in ("localhost", "127.0.0.1"):
+    connect_args = {"sslmode": "require"}
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"sslmode": "require"},
+    connect_args=connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
