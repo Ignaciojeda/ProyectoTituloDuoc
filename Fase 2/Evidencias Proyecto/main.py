@@ -46,6 +46,14 @@ def segunda(request: Request):
         context={}
     )
 
+@app.get("/sinoptico")
+def segunda(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="sinopticos.html",
+        context={}
+    )
+
 # --- conexión---
 @app.get("/asignaturas")
 def listar_asignaturas(db: Session = Depends(get_db)):
