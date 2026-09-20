@@ -191,6 +191,52 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     profesor_carga = defaultdict(int)
     sala_carga = defaultdict(int)
 
+    for asignatura in asignaturas:
+            area_requerida = area_para_asignatura(asignatura.nombre)
+            candidatos_prof = sorted(profesores, key=lambda p: (
+                0 if (area_requerida and p.area_docente.value == area_requerida) else 1,
+                profesor_carga[p.id]
+            ))
+            candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
+    
+            asignado = False
+            for b in bloques:
+                for p in candidatos_prof:
+                    if b.id in profesor_ocupado[p.id]:
+                        continue
+                    for s in candidatos_sala:
+                        if b.id in sala_ocupada[s.id]:
+                            continue
+                        profesor_ocupado[p.id].add(b.id)
+                        sala_ocupada[s.id].add(b.id)
+                        profesor_carga[p.id] += 1
+                        sala_carga[s.id] += 1
+    
+                        item = models.SinopticoItem(
+                            sinoptico_id=nuevo_sinoptico.id,
+                            asignatura_id=asignatura.id,
+                            profesor_id=p.id,
+                            sala_id=s.id,
+                            bloque_horario_id=b.id
+                        )
+                        db.add(item)
+                        asignado = True
+                        break
+                    if asignado:
+                        break
+                if asignado:
+                    break
+    
+            if not asignado:
+                sin_asignar.append(asignatura.codigo)
+    
+    db.commit()
+    db.refresh(nuevo_sinoptico)
+    
+    return {
+        "sinoptico_id": nuevo_sinoptico.id,
+        "asignaturas_sin_asignar": sin_asignar
+    }
 
 
 @app.get("/sinopticos")
@@ -295,49 +341,3 @@ def eliminar_item_sinoptico(item_id: int, db: Session = Depends(get_db)):
 
 
 
-    for asignatura in asignaturas:
-        area_requerida = area_para_asignatura(asignatura.nombre)
-        candidatos_prof = sorted(profesores, key=lambda p: (
-            0 if (area_requerida and p.area_docente.value == area_requerida) else 1,
-            profesor_carga[p.id]
-        ))
-        candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
-
-        asignado = False
-        for b in bloques:
-            for p in candidatos_prof:
-                if b.id in profesor_ocupado[p.id]:
-                    continue
-                for s in candidatos_sala:
-                    if b.id in sala_ocupada[s.id]:
-                        continue
-                    profesor_ocupado[p.id].add(b.id)
-                    sala_ocupada[s.id].add(b.id)
-                    profesor_carga[p.id] += 1
-                    sala_carga[s.id] += 1
-
-                    item = models.SinopticoItem(
-                        sinoptico_id=nuevo_sinoptico.id,
-                        asignatura_id=asignatura.id,
-                        profesor_id=p.id,
-                        sala_id=s.id,
-                        bloque_horario_id=b.id
-                    )
-                    db.add(item)
-                    asignado = True
-                    break
-                if asignado:
-                    break
-            if asignado:
-                break
-
-        if not asignado:
-            sin_asignar.append(asignatura.codigo)
-
-    db.commit()
-    db.refresh(nuevo_sinoptico)
-
-    return {
-        "sinoptico_id": nuevo_sinoptico.id,
-        "asignaturas_sin_asignar": sin_asignar
-    }

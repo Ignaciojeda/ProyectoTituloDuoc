@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const selectSemestre = document.getElementById('semestre');
     const selectExistente = document.getElementById('sinopticoExistente');
     const btnCrearSinoptico = document.getElementById('btnCrearSinoptico');
+    const btnGenerarAuto = document.getElementById('btnGenerarAuto');
     const mensaje = document.getElementById('mensaje');
 
     const bloqueAgregarClase = document.getElementById('bloqueAgregarClase');
@@ -209,6 +210,39 @@ document.addEventListener('DOMContentLoaded', function () {
                 cargarSinopticosExistentes();
             })
             .catch(err => mostrarMensaje(err.message, 'error'));
+    });
+
+    btnGenerarAuto.addEventListener('click', function () {
+        if (!selectCarrera.value || !selectSemestre.value) {
+            mostrarMensaje('Selecciona una carrera y un semestre.', 'error');
+            return;
+        }
+
+        mostrarMensaje('Generando sinóptico automáticamente...', 'info');
+
+        fetch('/sinopticos/generar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                carrera_id: parseInt(selectCarrera.value),
+                semestre_id: parseInt(selectSemestre.value)
+            })
+        })
+            .then(async res => {
+                const data = await res.json(); 
+                if (!res.ok) throw new Error(data.detail || 'No se pudo generar el sinóptico.');
+                return data;
+            })
+            .then(data => {
+                const sinAsignar = data.sin_asignar ? ` Sin asignaturas: ${data.sin_asignar.join(', ')}.` : '';
+                mostrarMensaje(`Sinóptico #${data.sinoptico_id} generado automáticamente.${sinAsignar}`, 'ok');
+                activarSinoptico(data.sinoptico_id);
+                cargarSinopticosExistentes();
+            })
+            .catch(err => {
+                console.error('DEBUG:', err);
+                mostrarMensaje(err.message, 'error');
+            });
     });
 
     btnAgregarClase.addEventListener('click', function () {
