@@ -1,0 +1,94 @@
+{#
+  Plantilla base para todas las páginas autenticadas.
+  Define el navbar con info del usuario y botón de logout.
+  Las páginas hijas se extienden de este archivo y sobreescriben los bloques.
+#}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block titulo %}Sistema de Sinópticos{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/sinopticos.css') }}">
+    <style>
+        .navbar-rol {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-left: 10px;
+        }
+        .rol-administrador { background: #fde68a; color: #92400e; }
+        .rol-coordinador   { background: #bfdbfe; color: #1e3a8a; }
+        .rol-docente       { background: #bbf7d0; color: #14532d; }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 14px;
+        }
+        .user-info .btn-logout {
+            color: #fff;
+            text-decoration: none;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            padding: 6px 12px;
+            border-radius: 4px;
+        }
+        .user-info .btn-logout:hover { background: rgba(255, 255, 255, 0.1); }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 18px;
+            padding: 24px;
+        }
+        .dashboard-card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        }
+        .dashboard-card h3 {
+            margin-top: 0;
+            color: #1f2933;
+        }
+        .dashboard-card p {
+            color: #52606d;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .dashboard-card a.btn {
+            display: inline-block;
+            margin-top: 12px;
+            background: #2563eb;
+            color: #fff;
+            text-decoration: none;
+            padding: 8px 14px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .dashboard-card a.btn:hover { background: #1d4ed8; }
+        .dashboard-card a.btn.secondary { background: #6b7280; }
+        .dashboard-card a.btn.secondary:hover { background: #4b5563; }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1 style="font-size:18px; margin:0;">
+        Sistema de Sinópticos
+        <span class="navbar-rol rol-{{ user.rol.value if user.rol.value is defined else user.rol }}">{{ user.rol.value if user.rol.value is defined else user.rol }}</span>
+    </h1>
+    <div class="user-info">
+        <span>👤 {{ user.nombre }}</span>
+        <a href="/logout" class="btn-logout">Cerrar sesión</a>
+    </div>
+</header>
+
+{% block contenido %}{% endblock %}
+
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión - Sistema de Sinópticos</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/login.css') }}">
+</head>
+<body>
+
+<main class="login-wrapper">
+    <section class="login-card">
+        <header class="login-header">
+            <h1>Sistema de Sinópticos</h1>
+            <p class="subtitulo">Iniciar sesión</p>
+        </header>
+
+        {% if error %}
+            <div class="alerta alerta-error" role="alert">
+                {{ error }}
+            </div>
+        {% endif %}
+
+        <form method="post" action="/login" class="login-form" autocomplete="on">
+            {% if next %}
+                <input type="hidden" name="next" value="{{ next }}">
+            {% endif %}
+
+            <label for="email">Correo electrónico</label>
+            <input
+                type="email"
+                id="email"
+                name="email"
+                placeholder="usuario@duoc.cl"
+                required
+                autofocus
+                autocomplete="username"
+            >
+
+            <label for="password">Contraseña</label>
+            <input
+                type="password"
+                id="password"
+                name="password"
+                placeholder="••••••••"
+                required
+                autocomplete="current-password"
+            >
+
+            <button type="submit">Ingresar</button>
+        </form>
+
+        <footer class="login-footer">
+            <small>Roles: administrador · coordinador · docente</small>
+        </footer>
+    </section>
+</main>
+
+</body>
+</html>

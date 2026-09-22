@@ -1,14 +1,39 @@
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends, HTTPException, Form, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from collections import defaultdict # nuevo
+from sqlalchemy.exc import IntegrityError
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request as StarletteRequest
+from collections import defaultdict
+import os
+import secrets
 
 from database import engine, get_db, Base
 import models
-import schemas # nuevo: importamos schemas para usarlo en la ruta de asignaturas
+import schemas
+from auth import (
+    authenticate_user,
+    hash_password,
+    require_login,
+    require_admin,
+    require_coordinador,
+    require_docente,
+)
 
 app = FastAPI()
+
+# Sesión firmada por cookie (requerida para auth).
+# En producción, definir SECRET_KEY en el .env (mínimo 32 bytes aleatorios).
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SECRET_KEY") or secrets.token_urlsafe(32),
+    session_cookie="sinopticos_session",
+    max_age=60 * 60 * 8,  # 8 horas
+    same_site="lax",
+    https_only=False,  # cambiar a True en producción con HTTPS
+)
 
 templates = Jinja2Templates(directory="templates")
 
@@ -35,11 +60,13 @@ def area_para_asignatura(nombre_asignatura: str):
 
 @app.get("/")
 def inicio(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={}
-    )
+    # Si hay sesión activa, redirige al dashboard correspondiente;
+    # si no, al formulario de login.
+    user_id = request.session.get("user_id")
+    if user_id:
+        rol = request.session.get("rol", "docente")
+        return RedirectResponse(url=_home_for_role(rol), status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/pag2")
 def segunda(request: Request):
@@ -338,6 +365,220 @@ def eliminar_item_sinoptico(item_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ===========================================================================
+# AUTENTICACIÓN Y AUTORIZACIÓN
+# ===========================================================================
+
+def _home_for_role(rol: str) -> str:
+    """Devuelve la URL del dashboard según el rol."""
+    return {
+        "administrador": "/admin",
+        "coordinador": "/coordinador",
+        "docente": "/docente",
+    }.get(rol.lower(), "/dashboard")
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form(request: Request, error: str | None = None, next: str | None = None):
+    """Muestra el formulario de login."""
+    # Si ya hay sesión activa, redirige al dashboard
+    if request.session.get("user_id"):
+        rol = request.session.get("rol", "docente")
+        return RedirectResponse(url=_home_for_role(rol), status_code=status.HTTP_303_SEE_OTHER)
+
+    return templates.TemplateResponse(
+    request=request,
+    name="login.html",
+    context={"error": error, "next": next}
+)
+
+
+@app.post("/login")
+async def login_submit(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Acepta tanto form (HTML) como JSON (API).
+    - Form: redirige al dashboard correspondiente al rol.
+    - JSON: devuelve {id, nombre, email, rol}.
+    """
+    content_type = request.headers.get("content-type", "")
+    is_json = "application/json" in content_type
+
+    if is_json:
+        try:
+            payload = await request.json()
+            data = schemas.LoginRequest(**payload)
+            email = data.email
+            password = data.password
+        except Exception:
+            raise HTTPException(status_code=400, detail="Payload inválido")
+    else:
+        form = await request.form()
+        email = (form.get("email") or "").strip().lower()
+        password = form.get("password") or ""
+        next_url = form.get("next") or None
+
+    user = authenticate_user(db, email, password)
+
+    if not user:
+        if is_json:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Credenciales inválidas",
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={"error": "Credenciales inválidas", "next": next_url},
+            status_code=status.HTTP_401_UNAUTHORIZED
+        )
+
+    # Guardamos datos mínimos en la sesión
+    request.session["user_id"] = user.id
+    request.session["rol"] = user.rol.value
+    request.session["nombre"] = user.nombre
+
+    if is_json:
+        return schemas.LoginResponse(
+            id=user.id,
+            nombre=user.nombre,
+            email=user.email,
+            rol=user.rol,
+        )
+
+    # Redirección: si viene ?next= y es relativa al sitio, la respetamos
+    if not is_json and next_url and next_url.startswith("/"):
+        return RedirectResponse(url=next_url, status_code=status.HTTP_303_SEE_OTHER)
+
+    return RedirectResponse(
+        url=_home_for_role(user.rol.value),
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.get("/logout")
+def logout(request: Request):
+    """Cierra la sesión y redirige al login."""
+    request.session.clear()
+    response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return response
+
+
+# --- Endpoint común para obtener el usuario actual (API) --------------------
+@app.get("/me", response_model=schemas.UsuarioOut)
+def me(user: models.Usuario = Depends(require_login)):
+    return user
+
+
+# --- Dashboard router (elige vista según rol) -------------------------------
+@app.get("/dashboard")
+def dashboard(request: Request, user: models.Usuario = Depends(require_login)):
+    return RedirectResponse(
+        url=_home_for_role(user.rol.value), status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+# --- Dashboards por rol ------------------------------------------------------
+@app.get("/admin", response_class=HTMLResponse)
+def admin_home(request: Request, user: models.Usuario = Depends(require_admin)):
+        return templates.TemplateResponse(
+        request=request,
+        name="admin.html",
+        context={"user": user}
+    )
+
+
+@app.get("/coordinador", response_class=HTMLResponse)
+def coordinador_home(request: Request, user: models.Usuario = Depends(require_coordinador)):
+    return templates.TemplateResponse(
+        "coordinador.html", {"request": request, "user": user}
+    )
+
+
+@app.get("/docente", response_class=HTMLResponse)
+def docente_home(request: Request, user: models.Usuario = Depends(require_docente)):
+    return templates.TemplateResponse(
+        "docente.html", {"request": request, "user": user}
+    )
+
+
+# ===========================================================================
+# GESTIÓN DE USUARIOS (solo administrador)
+# ===========================================================================
+
+@app.get("/admin/usuarios", response_model=list[schemas.UsuarioOut])
+def listar_usuarios(db: Session = Depends(get_db), _: models.Usuario = Depends(require_admin)):
+    return db.query(models.Usuario).order_by(models.Usuario.nombre).all()
+
+
+@app.post("/admin/usuarios", response_model=schemas.UsuarioOut, status_code=201)
+def crear_usuario(
+    datos: schemas.UsuarioCreate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_admin),
+):
+    nuevo = models.Usuario(
+        nombre=datos.nombre,
+        email=str(datos.email).lower(),
+        password_hash=hash_password(datos.password),
+        rol=datos.rol,
+        activo=True,
+    )
+    db.add(nuevo)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
+    db.refresh(nuevo)
+    return nuevo
+
+
+@app.patch("/admin/usuarios/{usuario_id}", response_model=schemas.UsuarioOut)
+def actualizar_usuario(
+    usuario_id: int,
+    datos: schemas.UsuarioUpdate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_admin),
+):
+    user = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    cambios = datos.model_dump(exclude_unset=True)
+    if "password" in cambios and cambios["password"]:
+        user.password_hash = hash_password(cambios.pop("password"))
+    if "email" in cambios and cambios["email"]:
+        cambios["email"] = str(cambios["email"]).lower()
+    for campo, valor in cambios.items():
+        setattr(user, campo, valor)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Email ya registrado")
+    db.refresh(user)
+    return user
+
+
+@app.delete("/admin/usuarios/{usuario_id}", status_code=204)
+def eliminar_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    current: models.Usuario = Depends(require_admin),
+):
+    # Evitar que el admin se elimine a sí mismo
+    if current.id == usuario_id:
+        raise HTTPException(status_code=400, detail="No puede eliminarse a sí mismo")
+    user = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    db.delete(user)
+    db.commit()
+    return None
 
 
 

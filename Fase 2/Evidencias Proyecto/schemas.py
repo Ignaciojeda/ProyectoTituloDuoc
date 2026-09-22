@@ -1,6 +1,9 @@
 from datetime import date, time
+from pydantic import BaseModel, EmailStr, Field
+from models import JornadaTipo, AreaDocenteTipo, RolUsuario
+from typing import Optional
 from pydantic import BaseModel
-from models import JornadaTipo, AreaDocenteTipo
+from typing import Optional
 
 
 # --- Asignatura ---
@@ -11,7 +14,7 @@ class AsignaturaCreate(BaseModel):
     codigo: str
     nombre: str
     jornada: JornadaTipo
-    plan_estudio_id: int | None = None
+    plan_estudio_id: Optional[int] = None
     horas: int | None = None
 
 class AsignaturaOut(AsignaturaCreate):
@@ -132,6 +135,50 @@ class SinopticoItemCreate(BaseModel):
 
 class SinopticoItemOut(SinopticoItemCreate):
     id: int
+
+    class Config:
+        from_attributes = True
+
+
+# --- Login / Autenticación ---
+class LoginRequest(BaseModel):
+    """Schema para login vía JSON (API)."""
+    email: EmailStr
+    password: str = Field(min_length=4)
+
+
+class LoginResponse(BaseModel):
+    """Respuesta del endpoint de login."""
+    id: int
+    nombre: str
+    email: EmailStr
+    rol: RolUsuario
+
+
+# --- Usuario (CRUD básico para admin) ---
+class UsuarioCreate(BaseModel):
+    """Para crear usuarios nuevos (la contraseña se hashea en backend)."""
+    nombre: str = Field(min_length=2, max_length=100)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    rol: RolUsuario = RolUsuario.coordinador
+
+
+class UsuarioUpdate(BaseModel):
+    """Actualización parcial (todos los campos opcionales)."""
+    nombre: str | None = None
+    email: EmailStr | None = None
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+    rol: RolUsuario | None = None
+    activo: bool | None = None
+
+
+class UsuarioOut(BaseModel):
+    id: int
+    nombre: str
+    email: EmailStr
+    rol: RolUsuario
+    activo: bool
 
     class Config:
         from_attributes = True
