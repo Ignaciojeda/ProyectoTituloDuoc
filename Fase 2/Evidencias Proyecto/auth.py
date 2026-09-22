@@ -63,9 +63,7 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[models
     return user
 
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
-) -> models.Usuario:
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No se pudieron validar las credenciales",
@@ -73,13 +71,24 @@ def get_current_user(
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("sub")
+        user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
-    user = db.query(models.Usuario).filter(models.Usuario.id == user_id, models.Usuario.activo == True).first()
+    # CONVERTIR user_id A INT
+    try:
+        user_id_int = int(user_id)
+    except ValueError:
+        raise credentials_exception
+
+    # Consulta con el valor en entero
+    user = db.query(models.Usuario).filter(
+        models.Usuario.id == user_id_int, 
+        models.Usuario.activo == True
+    ).first()
+
     if user is None:
         raise credentials_exception
     return user

@@ -1,0 +1,232 @@
+/* ==========================================================================
+   PALETA DE COLORES E IDENTIDAD DUOC UC
+   ========================================================================== */
+:root {
+  /* Colores Principales Duoc UC */
+  --duoc-navy: #002B49;       /* Azul Marino Institucional */
+  --duoc-navy-dark: #001E34;  /* Azul Marino Oscuro */
+  --duoc-yellow: #FFC72C;     /* Amarillo / Oro Duoc */
+  --duoc-yellow-hover: #E5B220;
+  
+  /* Colores Secundarios y de Acento */
+  --duoc-blue-accent: #0072CE;/* Azul de Acento / Enlaces */
+  --duoc-blue-light: #E6F0FA; /* Fondo Claro Seleccionado */
+  
+  /* Grises y Fondos */
+  --bg-main: #F4F6F9;         /* Fondo General */
+  --bg-surface: #FFFFFF;      /* Tarjetas y Contenedores */
+  --border-color: #E2E8F0;    /* Bordes Suaves */
+  
+  /* Tipografía y Textos */
+  --text-main: #1E293B;       /* Texto Principal */
+  --text-muted: #64748B;      /* Texto Secundario */
+  --text-white: #FFFFFF;
+  
+  /* Sombras y Radios */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 3px rgba(0, 43, 73, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 43, 73, 0.10);
+  --shadow-lg: 0 10px 25px rgba(0, 43, 73, 0.15);
+}
+
+/* Base Global */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   CABECERA / NAVBAR INSTITUCIONAL
+   ========================================================================== */
+.duoc-header {
+  background-color: var(--duoc-navy);
+  color: var(--text-white);
+  padding: 14px 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: var(--shadow-md);
+  border-bottom: 4px solid var(--duoc-yellow);
+}
+
+.duoc-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.3px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.duoc-header-badge {
+  background-color: var(--duoc-yellow);
+  color: var(--duoc-navy);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.duoc-user-section {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.duoc-btn-logout {
+  background: transparent;
+  color: var(--text-white);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.duoc-btn-logout:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--text-white);
+}
+
+/* ==========================================================================
+   TARJETAS Y PANELES
+   ========================================================================== */
+.duoc-card {
+  background-color: var(--bg-surface);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.duoc-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.duoc-card h2, .duoc-card h3 {
+  color: var(--duoc-navy);
+  margin-top: 0;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   FORMULARIOS Y SELECTORES
+   ========================================================================== */
+.duoc-form-group {
+  margin-bottom: 18px;
+}
+
+.duoc-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--duoc-navy);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.duoc-input, .duoc-select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  color: var(--text-main);
+  background-color: var(--bg-surface);
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.duoc-input:focus, .duoc-select:focus {
+  outline: none;
+  border-color: var(--duoc-blue-accent);
+  box-shadow: 0 0 0 3px rgba(0, 114, 206, 0.15);
+}
+
+/* ==========================================================================
+   BOTONES
+   ========================================================================== */
+.duoc-btn-primary {
+  width: 100%;
+  background-color: var(--duoc-navy);
+  color: var(--text-white);
+  border: none;
+  padding: 12px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.duoc-btn-primary:hover {
+  background-color: var(--duoc-navy-dark);
+}
+
+.duoc-btn-accent {
+  width: 100%;
+  background-color: var(--duoc-yellow);
+  color: var(--duoc-navy);
+  border: none;
+  padding: 12px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.duoc-btn-accent:hover {
+  background-color: var(--duoc-yellow-hover);
+}
+
+/* ==========================================================================
+   ESTILOS DE FULLCALENDAR DUOC UC
+   ========================================================================== */
+.fc {
+  --fc-border-color: #E2E8F0;
+  --fc-today-bg-color: #FEFCE8;
+  font-family: inherit;
+}
+
+.fc .fc-col-header-cell {
+  background-color: var(--duoc-navy);
+  color: var(--text-white);
+  padding: 10px 0;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.fc .fc-timegrid-slot-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.fc-event {
+  background-color: var(--duoc-blue-light) !important;
+  border-left: 4px solid var(--duoc-blue-accent) !important;
+  border-top: none !important;
+  border-right: none !important;
+  border-bottom: none !important;
+  color: var(--duoc-navy) !important;
+  border-radius: 4px !important;
+  padding: 4px 6px !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
