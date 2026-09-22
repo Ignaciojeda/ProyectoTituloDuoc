@@ -2,20 +2,15 @@ from datetime import date, time
 from pydantic import BaseModel, EmailStr, Field
 from models import JornadaTipo, AreaDocenteTipo, RolUsuario
 from typing import Optional
-from pydantic import BaseModel
-from typing import Optional
 
 
 # --- Asignatura ---
-# OJO: estos campos deben calzar con los de models.Asignatura (antes tenía
-# carrera_id/creditos/horas_semanales, que no existen en el modelo y hacían
-# fallar la creación).
 class AsignaturaCreate(BaseModel):
     codigo: str
     nombre: str
     jornada: JornadaTipo
     plan_estudio_id: Optional[int] = None
-    horas: int | None = None
+    horas: Optional[int] = None
 
 class AsignaturaOut(AsignaturaCreate):
     id: int
@@ -42,7 +37,7 @@ class PlanEstudioCreate(BaseModel):
     codigo: str
     nombre: str
     vigente_desde: date
-    vigente_hasta: date | None = None
+    vigente_hasta: Optional[date] = None
 
 class PlanEstudioOut(PlanEstudioCreate):
     id: int
@@ -83,9 +78,9 @@ class ProfesorOut(ProfesorCreate):
 # --- Sala ---
 class SalaCreate(BaseModel):
     nombre: str
-    edificio: str          # 'W', 'Y' o 'Z'
+    edificio: str
     cantidad_sillas: int
-    piso: int | None = None
+    piso: Optional[int] = None
 
 class SalaOut(SalaCreate):
     id: int
@@ -94,9 +89,9 @@ class SalaOut(SalaCreate):
         from_attributes = True
 
 
-# --- Bloque horario (día + hora inicio/fin) ---
+# --- Bloque horario ---
 class BloqueHorarioCreate(BaseModel):
-    dia_semana: int        # 1=Lunes ... 6=Sábado
+    dia_semana: int
     hora_inicio: time
     hora_fin: time
     jornada: JornadaTipo
@@ -114,7 +109,7 @@ class GenerarSinopticoRequest(BaseModel):
     semestre_id: int
 
 
-# --- Construcción manual del sinóptico ---
+# --- Sinóptico ---
 class SinopticoCreate(BaseModel):
     carrera_id: int
     semestre_id: int
@@ -129,8 +124,8 @@ class SinopticoOut(SinopticoCreate):
 class SinopticoItemCreate(BaseModel):
     sinoptico_id: int
     asignatura_id: int
-    profesor_id: int | None = None
-    sala_id: int | None = None
+    profesor_id: Optional[int] = None
+    sala_id: Optional[int] = None
     bloque_horario_id: int
 
 class SinopticoItemOut(SinopticoItemCreate):
@@ -140,39 +135,7 @@ class SinopticoItemOut(SinopticoItemCreate):
         from_attributes = True
 
 
-# --- Login / Autenticación ---
-class LoginRequest(BaseModel):
-    """Schema para login vía JSON (API)."""
-    email: EmailStr
-    password: str = Field(min_length=4)
-
-
-class LoginResponse(BaseModel):
-    """Respuesta del endpoint de login."""
-    id: int
-    nombre: str
-    email: EmailStr
-    rol: RolUsuario
-
-
-# --- Usuario (CRUD básico para admin) ---
-class UsuarioCreate(BaseModel):
-    """Para crear usuarios nuevos (la contraseña se hashea en backend)."""
-    nombre: str = Field(min_length=2, max_length=100)
-    email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
-    rol: RolUsuario = RolUsuario.coordinador
-
-
-class UsuarioUpdate(BaseModel):
-    """Actualización parcial (todos los campos opcionales)."""
-    nombre: str | None = None
-    email: EmailStr | None = None
-    password: str | None = Field(default=None, min_length=6, max_length=128)
-    rol: RolUsuario | None = None
-    activo: bool | None = None
-
-
+# --- Usuario Out ---
 class UsuarioOut(BaseModel):
     id: int
     nombre: str
@@ -182,3 +145,31 @@ class UsuarioOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Auth / Tokens ---
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=4)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UsuarioOut
+
+
+# --- Usuario CRUD ---
+class UsuarioCreate(BaseModel):
+    nombre: str = Field(min_length=2, max_length=100)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    rol: RolUsuario = RolUsuario.coordinador
+
+
+class UsuarioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(default=None, min_length=6, max_length=128)
+    rol: Optional[RolUsuario] = None
+    activo: Optional[bool] = None
