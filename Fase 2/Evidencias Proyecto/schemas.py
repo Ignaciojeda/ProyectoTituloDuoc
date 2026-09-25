@@ -8,7 +8,6 @@ from typing import Optional
 class AsignaturaCreate(BaseModel):
     codigo: str
     nombre: str
-    jornada: JornadaTipo
     plan_estudio_id: Optional[int] = None
     horas: Optional[int] = None
 
@@ -107,6 +106,7 @@ class BloqueHorarioOut(BloqueHorarioCreate):
 class GenerarSinopticoRequest(BaseModel):
     carrera_id: int
     semestre_id: int
+    jornada: JornadaTipo
 
 
 # --- Sinóptico ---

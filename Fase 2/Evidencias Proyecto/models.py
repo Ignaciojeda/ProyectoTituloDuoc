@@ -112,7 +112,6 @@ class Asignatura(Base):
     id = Column(Integer, primary_key=True)
     codigo = Column(String(20), unique=True, nullable=False)
     nombre = Column(String(150), nullable=False)
-    jornada = Column(Enum(JornadaTipo), nullable=False)
     plan_estudio_id = Column(Integer, ForeignKey("plan_estudio.id", ondelete="SET NULL"), nullable=True)
     horas = Column(SmallInteger)
     activo = Column(Boolean, nullable=False, default=True)

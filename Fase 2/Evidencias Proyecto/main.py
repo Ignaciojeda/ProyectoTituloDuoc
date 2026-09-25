@@ -160,9 +160,8 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     if not asignaturas:
         raise HTTPException(status_code=404, detail="No se encontraron asignaturas para la carrera especificada.")
 
-    jornada = asignaturas[0].jornada
     bloques = db.query(models.BloqueHorario).filter(
-        models.BloqueHorario.jornada == jornada
+        models.BloqueHorario.jornada == datos.jornada
     ).order_by(models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio).all()
 
     profesores = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
@@ -278,6 +277,36 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
             }
         })
     return eventos
+
+
+@app.delete("/api/sinopticos/items/{item_id}", status_code=204)
+def eliminar_item_sinoptico(
+    item_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(get_current_user),
+):
+    item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
+    db.delete(item)
+    db.commit()
+    return None
+
+
+@app.delete("/api/sinopticos/{sinoptico_id}", status_code=204)
+def eliminar_sinoptico(
+    sinoptico_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(get_current_user),
+):
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    # SinopticoItem tiene ondelete="CASCADE" hacia sinoptico, así que esto
+    # también borra automáticamente todas sus clases.
+    db.delete(sinoptico)
+    db.commit()
+    return None
 
 
 # ===========================================================================

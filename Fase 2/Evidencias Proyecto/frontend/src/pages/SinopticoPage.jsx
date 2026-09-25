@@ -35,6 +35,7 @@ export default function SinopticoPage() {
   
   const [carreraSel, setCarreraSel] = useState('')
   const [semestreSel, setSemestreSel] = useState('')
+  const [jornadaSel, setJornadaSel] = useState('diurno')
   const [sinopticoSel, setSinopticoSel] = useState('')
   
   const [eventos, setEventos] = useState([])
@@ -72,13 +73,51 @@ export default function SinopticoPage() {
     try {
       const { data } = await api.post('/sinopticos/generar', {
         carrera_id: parseInt(carreraSel),
-        semestre_id: parseInt(semestreSel)
+        semestre_id: parseInt(semestreSel),
+        jornada: jornadaSel
       })
       setMensaje(`Sinóptico #${data.sinoptico_id} generado correctamente.`)
       setSinopticoSel(data.sinoptico_id)
       cargarEventosSinoptico(data.sinoptico_id)
     } catch (err) {
       setMensaje(err.response?.data?.detail || 'Error al generar sinóptico.')
+    }
+  }
+
+  const handleEliminarSinoptico = async () => {
+    if (!sinopticoSel) {
+      setMensaje('Primero seleccione un sinóptico de la lista.')
+      return
+    }
+    const confirmado = window.confirm(
+      `¿Está seguro de que desea eliminar el sinóptico #${sinopticoSel} completo? Esta acción no se puede deshacer y borrará todas sus clases.`
+    )
+    if (!confirmado) return
+
+    try {
+      await api.delete(`/sinopticos/${sinopticoSel}`)
+      setMensaje(`Sinóptico #${sinopticoSel} eliminado.`)
+      setSinopticoSel('')
+      setEventos([])
+      const { data } = await api.get('/sinopticos')
+      setSinopticosExistentes(data)
+    } catch (err) {
+      setMensaje(err.response?.data?.detail || 'Error al eliminar el sinóptico.')
+    }
+  }
+
+  const handleEliminarBloque = async (clase) => {
+    const confirmado = window.confirm(
+      `¿Está seguro de que desea eliminar el bloque "${clase.title}"? Esta acción no se puede deshacer.`
+    )
+    if (!confirmado) return
+
+    try {
+      await api.delete(`/sinopticos/items/${clase.id}`)
+      setEventos(prev => prev.filter(e => e.id !== clase.id))
+      setMensaje('Bloque de horario eliminado.')
+    } catch (err) {
+      setMensaje(err.response?.data?.detail || 'Error al eliminar el bloque.')
     }
   }
 
@@ -143,6 +182,14 @@ export default function SinopticoPage() {
             </select>
           </div>
 
+          <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+            <label className="duoc-label" style={{ fontSize: '11px' }}>Jornada</label>
+            <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={jornadaSel} onChange={e => setJornadaSel(e.target.value)}>
+              <option value="diurno">Diurno</option>
+              <option value="vespertino">Vespertino</option>
+            </select>
+          </div>
+
           <button onClick={handleGenerarAuto} className="duoc-btn-primary" style={{ marginTop: '2px', padding: '7px 10px', fontSize: '12px' }}>
             Generar automáticamente
           </button>
@@ -164,6 +211,26 @@ export default function SinopticoPage() {
                 <option key={s.id} value={s.id}>#{s.id} - {s.carrera} ({s.semestre})</option>
               ))}
             </select>
+
+            <button
+              onClick={handleEliminarSinoptico}
+              disabled={!sinopticoSel}
+              className="duoc-btn-danger"
+              style={{
+                marginTop: '8px',
+                padding: '7px 10px',
+                fontSize: '12px',
+                width: '100%',
+                backgroundColor: sinopticoSel ? '#b02a2a' : '#d1d5db',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                cursor: sinopticoSel ? 'pointer' : 'not-allowed',
+                fontWeight: 600,
+              }}
+            >
+              Eliminar sinóptico completo
+            </button>
           </div>
         </div>
 
@@ -217,9 +284,32 @@ export default function SinopticoPage() {
                               borderRadius: '2px',
                               cursor: 'grab',
                               userSelect: 'none',
-                              lineHeight: '1.1'
+                              lineHeight: '1.1',
+                              position: 'relative',
                             }}
                           >
+                            <button
+                              onClick={() => handleEliminarBloque(clase)}
+                              title="Eliminar este bloque"
+                              style={{
+                                position: 'absolute',
+                                top: '0px',
+                                right: '0px',
+                                border: 'none',
+                                background: '#b02a2a',
+                                color: '#fff',
+                                borderRadius: '50%',
+                                width: '12px',
+                                height: '12px',
+                                fontSize: '9px',
+                                lineHeight: '12px',
+                                textAlign: 'center',
+                                cursor: 'pointer',
+                                padding: 0,
+                              }}
+                            >
+                              ×
+                            </button>
                             <div style={{ fontWeight: 'bold', color: 'var(--duoc-navy)', fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.title}
                             </div>
