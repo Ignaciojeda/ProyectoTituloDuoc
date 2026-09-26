@@ -138,21 +138,44 @@ export default function SinopticoPage() {
     e.preventDefault()
   }
 
-  const handleDrop = (e, nuevoDiaKey, nuevoModuloLabel) => {
+  const handleDrop = async (e, nuevoDiaKey, nuevoModuloLabel) => {
     e.preventDefault()
-    const claseId = e.dataTransfer.getData('claseId')
-    const horaMatch = nuevoModuloLabel.split(' A ')[0]
+    const claseId = parseInt(e.dataTransfer.getData('claseId'))
+    const clase = eventos.find(ev => ev.id === claseId)
+    if (!clase) return
 
-    setEventos(prev => prev.map(item => {
-      if (item.id === parseInt(claseId)) {
-        return {
-          ...item,
-          daysOfWeek: [nuevoDiaKey],
-          startTime: `${horaMatch}:00`
-        }
-      }
-      return item
-    }))
+    const [horaIni, horaFin] = nuevoModuloLabel.split(' A ')
+    const diaActual = Array.isArray(clase.daysOfWeek) ? clase.daysOfWeek[0] : clase.daysOfWeek
+    const horaActual = clase.startTime?.slice(0, 5)
+
+    // Si se soltó en la misma celda de donde salió, no hacer nada
+    if (diaActual === nuevoDiaKey && horaActual === horaIni) return
+
+    const eventosAnteriores = eventos
+
+    // Actualización optimista: se mueve visualmente de inmediato
+    setEventos(prev => prev.map(item =>
+      item.id === claseId
+        ? { ...item, daysOfWeek: [nuevoDiaKey], startTime: `${horaIni}:00`, endTime: `${horaFin}:00` }
+        : item
+    ))
+
+    try {
+      await api.patch(`/sinopticos/items/${claseId}/mover`, {
+        dia_semana: nuevoDiaKey,
+        hora_inicio: `${horaIni}:00`,
+        hora_fin: `${horaFin}:00`,
+        jornada: clase.extendedProps?.jornada || jornadaSel,
+      })
+      setMensaje('Bloque movido correctamente.')
+    } catch (err) {
+      // El backend rechazó el cambio (profesor u sala ya ocupados, u otro error):
+      // se revierte el movimiento visual y se avisa el motivo exacto.
+      setEventos(eventosAnteriores)
+      const detalle = err.response?.data?.detail || 'No se pudo mover el bloque a ese horario.'
+      setMensaje(detalle)
+      window.alert(detalle)
+    }
   }
 
   return (

@@ -293,6 +293,66 @@ def eliminar_item_sinoptico(
     return None
 
 
+@app.patch("/api/sinopticos/items/{item_id}/mover")
+def mover_item_sinoptico(
+    item_id: int,
+    datos: schemas.MoverItemRequest,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(get_current_user),
+):
+    item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
+
+    # Busca el bloque_horario real que corresponde a la celda donde se soltó
+    nuevo_bloque = db.query(models.BloqueHorario).filter(
+        models.BloqueHorario.dia_semana == datos.dia_semana,
+        models.BloqueHorario.hora_inicio == datos.hora_inicio,
+        models.BloqueHorario.hora_fin == datos.hora_fin,
+        models.BloqueHorario.jornada == datos.jornada,
+    ).first()
+    if not nuevo_bloque:
+        raise HTTPException(
+            status_code=404,
+            detail="No existe un bloque horario registrado para ese día y módulo."
+        )
+
+    # Si no cambia nada, no hay nada que validar ni guardar
+    if nuevo_bloque.id == item.bloque_horario_id:
+        return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
+
+    # Verifica que el profesor de esta clase no tenga OTRA clase en ese nuevo horario
+    if item.profesor_id is not None:
+        choque_profesor = db.query(models.SinopticoItem).filter(
+            models.SinopticoItem.id != item_id,
+            models.SinopticoItem.profesor_id == item.profesor_id,
+            models.SinopticoItem.bloque_horario_id == nuevo_bloque.id,
+        ).first()
+        if choque_profesor:
+            raise HTTPException(
+                status_code=409,
+                detail="El profesor de esta clase ya tiene otra clase asignada en ese horario."
+            )
+
+    # Verifica que la sala de esta clase no esté ocupada por OTRA clase en ese nuevo horario
+    if item.sala_id is not None:
+        choque_sala = db.query(models.SinopticoItem).filter(
+            models.SinopticoItem.id != item_id,
+            models.SinopticoItem.sala_id == item.sala_id,
+            models.SinopticoItem.bloque_horario_id == nuevo_bloque.id,
+        ).first()
+        if choque_sala:
+            raise HTTPException(
+                status_code=409,
+                detail="La sala de esta clase ya está ocupada por otra clase en ese horario."
+            )
+
+    item.bloque_horario_id = nuevo_bloque.id
+    db.commit()
+    db.refresh(item)
+    return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
+
+
 @app.delete("/api/sinopticos/{sinoptico_id}", status_code=204)
 def eliminar_sinoptico(
     sinoptico_id: int,

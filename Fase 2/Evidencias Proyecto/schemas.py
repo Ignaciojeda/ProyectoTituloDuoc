@@ -135,6 +135,13 @@ class SinopticoItemOut(SinopticoItemCreate):
         from_attributes = True
 
 
+class MoverItemRequest(BaseModel):
+    dia_semana: int
+    hora_inicio: time
+    hora_fin: time
+    jornada: JornadaTipo
+
+
 # --- Usuario Out ---
 class UsuarioOut(BaseModel):
     id: int
