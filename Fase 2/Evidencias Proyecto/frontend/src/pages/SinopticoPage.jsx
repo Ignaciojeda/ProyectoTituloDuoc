@@ -32,14 +32,23 @@ export default function SinopticoPage() {
   const [carreras, setCarreras] = useState([])
   const [semestres, setSemestres] = useState([])
   const [sinopticosExistentes, setSinopticosExistentes] = useState([])
-  
+
+  // Listas para llenar los combos del panel de edición
+  const [asignaturas, setAsignaturas] = useState([])
+  const [profesores, setProfesores] = useState([])
+  const [salas, setSalas] = useState([])
+  const [bloquesHorario, setBloquesHorario] = useState([])
+
   const [carreraSel, setCarreraSel] = useState('')
   const [semestreSel, setSemestreSel] = useState('')
   const [jornadaSel, setJornadaSel] = useState('diurno')
   const [sinopticoSel, setSinopticoSel] = useState('')
-  
+
   const [eventos, setEventos] = useState([])
   const [mensaje, setMensaje] = useState('')
+
+  // Panel de edición de una clase (null = cerrado)
+  const [itemEditando, setItemEditando] = useState(null)
 
   useEffect(() => {
     api.get('/carreras')
@@ -53,6 +62,22 @@ export default function SinopticoPage() {
     api.get('/sinopticos')
       .then(res => setSinopticosExistentes(res.data))
       .catch(err => console.error('Error sinopticos:', err))
+
+    api.get('/asignaturas')
+      .then(res => setAsignaturas(res.data))
+      .catch(err => console.error('Error asignaturas:', err))
+
+    api.get('/profesores')
+      .then(res => setProfesores(res.data))
+      .catch(err => console.error('Error profesores:', err))
+
+    api.get('/salas')
+      .then(res => setSalas(res.data))
+      .catch(err => console.error('Error salas:', err))
+
+    api.get('/bloques-horario')
+      .then(res => setBloquesHorario(res.data))
+      .catch(err => console.error('Error bloques horario:', err))
   }, [])
 
   const cargarEventosSinoptico = async (id) => {
@@ -119,6 +144,45 @@ export default function SinopticoPage() {
     } catch (err) {
       setMensaje(err.response?.data?.detail || 'Error al eliminar el bloque.')
     }
+  }
+
+  const abrirEditorBloque = (clase) => {
+    setItemEditando({
+      id: clase.id,
+      asignatura_id: clase.extendedProps?.asignatura_id ?? '',
+      profesor_id: clase.extendedProps?.profesor_id ?? '',
+      sala_id: clase.extendedProps?.sala_id ?? '',
+      bloque_horario_id: clase.extendedProps?.bloque_horario_id ?? '',
+    })
+  }
+
+  const cerrarEditorBloque = () => setItemEditando(null)
+
+  const guardarEdicionBloque = async () => {
+    if (!itemEditando.asignatura_id || !itemEditando.bloque_horario_id) {
+      window.alert('Debe seleccionar al menos la asignatura y el bloque horario.')
+      return
+    }
+
+    try {
+      await api.put(`/sinopticos/items/${itemEditando.id}`, {
+        asignatura_id: parseInt(itemEditando.asignatura_id),
+        profesor_id: itemEditando.profesor_id ? parseInt(itemEditando.profesor_id) : null,
+        sala_id: itemEditando.sala_id ? parseInt(itemEditando.sala_id) : null,
+        bloque_horario_id: parseInt(itemEditando.bloque_horario_id),
+      })
+      setMensaje('Bloque actualizado correctamente.')
+      cerrarEditorBloque()
+      if (sinopticoSel) cargarEventosSinoptico(sinopticoSel)
+    } catch (err) {
+      const detalle = err.response?.data?.detail || 'No se pudo guardar la edición.'
+      window.alert(detalle)
+    }
+  }
+
+  const etiquetaBloque = (b) => {
+    const dia = DIAS_SEMANA.find(d => d.key === b.dia_semana)?.nombre || `Día ${b.dia_semana}`
+    return `${dia} ${b.hora_inicio.slice(0, 5)} - ${b.hora_fin.slice(0, 5)} (${b.jornada})`
   }
 
   const obtenerClaseParaModulo = (diaKey, horaInicioLabel) => {
@@ -311,28 +375,46 @@ export default function SinopticoPage() {
                               position: 'relative',
                             }}
                           >
-                            <button
-                              onClick={() => handleEliminarBloque(clase)}
-                              title="Eliminar este bloque"
-                              style={{
-                                position: 'absolute',
-                                top: '0px',
-                                right: '0px',
-                                border: 'none',
-                                background: '#b02a2a',
-                                color: '#fff',
-                                borderRadius: '50%',
-                                width: '12px',
-                                height: '12px',
-                                fontSize: '9px',
-                                lineHeight: '12px',
-                                textAlign: 'center',
-                                cursor: 'pointer',
-                                padding: 0,
-                              }}
-                            >
-                              ×
-                            </button>
+                            <div style={{ position: 'absolute', top: '0px', right: '0px', display: 'flex', gap: '2px' }}>
+                              <button
+                                onClick={() => abrirEditorBloque(clase)}
+                                title="Editar este bloque"
+                                style={{
+                                  border: 'none',
+                                  background: 'var(--duoc-blue-accent, #2563eb)',
+                                  color: '#fff',
+                                  borderRadius: '50%',
+                                  width: '12px',
+                                  height: '12px',
+                                  fontSize: '8px',
+                                  lineHeight: '12px',
+                                  textAlign: 'center',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                }}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                onClick={() => handleEliminarBloque(clase)}
+                                title="Eliminar este bloque"
+                                style={{
+                                  border: 'none',
+                                  background: '#b02a2a',
+                                  color: '#fff',
+                                  borderRadius: '50%',
+                                  width: '12px',
+                                  height: '12px',
+                                  fontSize: '9px',
+                                  lineHeight: '12px',
+                                  textAlign: 'center',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
                             <div style={{ fontWeight: 'bold', color: 'var(--duoc-navy)', fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.title}
                             </div>
@@ -350,6 +432,107 @@ export default function SinopticoPage() {
           </table>
         </div>
       </div>
+
+      {/* PANEL EMERGENTE DE EDICIÓN */}
+      {itemEditando && (
+        <div
+          onClick={cerrarEditorBloque}
+          style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="duoc-card"
+            style={{ width: '320px', padding: '18px' }}
+          >
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
+              Editar bloque
+            </h3>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Asignatura</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.asignatura_id}
+                onChange={e => setItemEditando({ ...itemEditando, asignatura_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {asignaturas.map(a => (
+                  <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Profesor</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.profesor_id}
+                onChange={e => setItemEditando({ ...itemEditando, profesor_id: e.target.value })}
+              >
+                <option value="">-- Sin asignar --</option>
+                {profesores.map(p => (
+                  <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.sala_id}
+                onChange={e => setItemEditando({ ...itemEditando, sala_id: e.target.value })}
+              >
+                <option value="">-- Sin asignar --</option>
+                {salas.map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.bloque_horario_id}
+                onChange={e => setItemEditando({ ...itemEditando, bloque_horario_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {bloquesHorario.map(b => (
+                  <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={guardarEdicionBloque}
+                className="duoc-btn-primary"
+                style={{ flex: 1, padding: '8px', fontSize: '12px' }}
+              >
+                Guardar cambios
+              </button>
+              <button
+                onClick={cerrarEditorBloque}
+                style={{
+                  flex: 1, padding: '8px', fontSize: '12px',
+                  border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
+                  background: '#fff', cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

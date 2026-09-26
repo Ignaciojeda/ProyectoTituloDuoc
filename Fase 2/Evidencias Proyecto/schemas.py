@@ -142,6 +142,13 @@ class MoverItemRequest(BaseModel):
     jornada: JornadaTipo
 
 
+class SinopticoItemUpdate(BaseModel):
+    asignatura_id: int
+    profesor_id: Optional[int] = None
+    sala_id: Optional[int] = None
+    bloque_horario_id: int
+
+
 # --- Usuario Out ---
 class UsuarioOut(BaseModel):
     id: int

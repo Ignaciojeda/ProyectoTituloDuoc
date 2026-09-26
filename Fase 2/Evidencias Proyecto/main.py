@@ -274,6 +274,10 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
                 "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else "Sin asignar",
                 "sala": sala.nombre if sala else "Sin asignar",
                 "jornada": bloque.jornada.value,
+                "asignatura_id": item.asignatura_id,
+                "profesor_id": item.profesor_id,
+                "sala_id": item.sala_id,
+                "bloque_horario_id": item.bloque_horario_id,
             }
         })
     return eventos
@@ -351,6 +355,46 @@ def mover_item_sinoptico(
     db.commit()
     db.refresh(item)
     return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
+
+
+@app.put("/api/sinopticos/items/{item_id}", response_model=schemas.SinopticoItemOut)
+def editar_item_sinoptico(
+    item_id: int,
+    datos: schemas.SinopticoItemUpdate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(get_current_user),
+):
+    item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
+
+    # Mismas validaciones que al mover: que el profesor y la sala elegidos
+    # no choquen con OTRA clase en ese mismo bloque horario.
+    if datos.profesor_id is not None:
+        choque_profesor = db.query(models.SinopticoItem).filter(
+            models.SinopticoItem.id != item_id,
+            models.SinopticoItem.profesor_id == datos.profesor_id,
+            models.SinopticoItem.bloque_horario_id == datos.bloque_horario_id,
+        ).first()
+        if choque_profesor:
+            raise HTTPException(status_code=409, detail="Ese profesor ya tiene otra clase asignada en ese bloque horario.")
+
+    if datos.sala_id is not None:
+        choque_sala = db.query(models.SinopticoItem).filter(
+            models.SinopticoItem.id != item_id,
+            models.SinopticoItem.sala_id == datos.sala_id,
+            models.SinopticoItem.bloque_horario_id == datos.bloque_horario_id,
+        ).first()
+        if choque_sala:
+            raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
+
+    item.asignatura_id = datos.asignatura_id
+    item.profesor_id = datos.profesor_id
+    item.sala_id = datos.sala_id
+    item.bloque_horario_id = datos.bloque_horario_id
+    db.commit()
+    db.refresh(item)
+    return item
 
 
 @app.delete("/api/sinopticos/{sinoptico_id}", status_code=204)
