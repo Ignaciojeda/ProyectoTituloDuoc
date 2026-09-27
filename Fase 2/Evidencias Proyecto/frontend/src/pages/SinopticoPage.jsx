@@ -80,6 +80,14 @@ export default function SinopticoPage() {
       .catch(err => console.error('Error bloques horario:', err))
   }, [])
 
+  const [agregandoNuevo, setAgregandoNuevo] = useState(false)
+  const [nuevoItem, setNuevoItem] = useState({
+    asignatura_id: '',
+    profesor_id: '',
+    sala_id: '',
+    bloque_horario_id: '',
+  })
+
   const cargarEventosSinoptico = async (id) => {
     try {
       const { data } = await api.get(`/sinopticos/${id}/eventos`)
@@ -176,6 +184,47 @@ export default function SinopticoPage() {
       if (sinopticoSel) cargarEventosSinoptico(sinopticoSel)
     } catch (err) {
       const detalle = err.response?.data?.detail || 'No se pudo guardar la edición.'
+      window.alert(detalle)
+    }
+  }
+
+  const abrirFormularioNuevo = () => {
+    if (!sinopticoSel) {
+      setMensaje('Primero seleccione un sinóptico existente.')
+      return
+    }
+    setNuevoItem({
+      asignatura_id: '',
+      profesor_id: '',
+      sala_id: '',
+      bloque_horario_id: '',
+    })
+    setAgregandoNuevo(true)
+  }
+
+  const cerrarFormularioNuevo = () => {
+    setAgregandoNuevo(false)
+  }
+
+  const guardarNuevoItem = async () => {
+    if (!nuevoItem.asignatura_id || !nuevoItem.bloque_horario_id) {
+      window.alert('Debe seleccionar al menos la asignatura y el bloque horario.')
+      return
+    }
+
+    try {
+      await api.post(`/sinopticos/items`, {
+        sinoptico_id: parseInt(sinopticoSel),
+        asignatura_id: parseInt(nuevoItem.asignatura_id),
+        profesor_id: nuevoItem.profesor_id ? parseInt(nuevoItem.profesor_id) : null,
+        sala_id: nuevoItem.sala_id ? parseInt(nuevoItem.sala_id) : null,
+        bloque_horario_id: parseInt(nuevoItem.bloque_horario_id),
+      })
+      setMensaje('Ramo agregado correctamente.')
+      cerrarFormularioNuevo()
+      cargarEventosSinoptico(sinopticoSel)
+    } catch (err) {
+      const detalle = err.response?.data?.detail || 'No se pudo agregar el ramo.'
       window.alert(detalle)
     }
   }
@@ -318,6 +367,14 @@ export default function SinopticoPage() {
             >
               Eliminar sinóptico completo
             </button>
+
+            <button
+              onClick={abrirFormularioNuevo}
+              className="duoc-btn-primary"
+              style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%' }}
+            >
+              Agregar ramo manualmente
+            </button>
           </div>
         </div>
 
@@ -448,7 +505,7 @@ export default function SinopticoPage() {
             style={{ width: '320px', padding: '18px' }}
           >
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
-              Editar bloque
+               bloque
             </h3>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
@@ -521,6 +578,106 @@ export default function SinopticoPage() {
               </button>
               <button
                 onClick={cerrarEditorBloque}
+                style={{
+                  flex: 1, padding: '8px', fontSize: '12px',
+                  border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
+                  background: '#fff', cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* PANEL PARA AGREGAR NUEVO ITEM */}
+      {agregandoNuevo && (
+        <div
+          onClick={cerrarFormularioNuevo}
+          style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="duoc-card"
+            style={{ width: '320px', padding: '18px' }}
+          >
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
+              Agregar ramo
+            </h3>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Asignatura</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.asignatura_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, asignatura_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {asignaturas.map(a => (
+                  <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Profesor</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.profesor_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, profesor_id: e.target.value })}
+              >
+                <option value="">-- Sin asignar --</option>
+                {profesores.map(p => (
+                  <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.sala_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
+              >
+                <option value="">-- Sin asignar --</option>
+                {salas.map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.bloque_horario_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {bloquesHorario.map(b => (
+                  <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={guardarNuevoItem}
+                className="duoc-btn-primary"
+                style={{ flex: 1, padding: '8px', fontSize: '12px' }}
+              >
+                Agregar
+              </button>
+              <button
+                onClick={cerrarFormularioNuevo}
                 style={{
                   flex: 1, padding: '8px', fontSize: '12px',
                   border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',

@@ -177,6 +177,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     sin_asignar = []
     profesor_carga = defaultdict(int)
     sala_carga = defaultdict(int)
+    bloque_carga = defaultdict(int) # nuevo
 
     for asignatura in asignaturas:
         area_requerida = area_para_asignatura(asignatura.nombre)
@@ -185,9 +186,10 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
             profesor_carga[p.id]
         ))
         candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
+        candidatos_bloques = sorted(bloques, key=lambda b: bloque_carga[b.id]) # nuevo
 
         asignado = False
-        for b in bloques:
+        for b in candidatos_bloques:
             for p in candidatos_prof:
                 if b.id in profesor_ocupado[p.id]:
                     continue
@@ -198,6 +200,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
                     sala_ocupada[s.id].add(b.id)
                     profesor_carga[p.id] += 1
                     sala_carga[s.id] += 1
+                    bloque_carga[b.id] += 1 # nuevo
 
                     item = models.SinopticoItem(
                         sinoptico_id=nuevo_sinoptico.id,
@@ -356,6 +359,38 @@ def mover_item_sinoptico(
     db.refresh(item)
     return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
 
+# para agregar item al sinoptico manualmente
+@app.post("/api/sinopticos/items", response_model=schemas.SinopticoItemOut, status_code=201)
+def agregar__item_sinoptico(
+    datos: schemas.SinopticoItemCreate,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(get_current_user),
+):
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+
+    if datos.profesor_id is not None:
+        choque_profesor = db.query(models.SinopticoItem).filter(
+            models.SinopticoItem.profesor_id == datos.profesor_id,
+            models.SinopticoItem.bloque_horario_id == datos.bloque_horario_id,
+        ).first()
+        if choque_profesor:
+            raise HTTPException(status_code=409, detail="Ese profesor ya tiene otra clase asignada en ese bloque horario.")
+
+        if datos.sala_id is not None:
+            choque_sala = db.query(models.SinopticoItem).filter(
+                models.SinopticoItem.sala_id == datos.sala_id,
+                models.SinopticoItem.bloque_horario_id == datos.bloque_horario_id,
+            ).first()
+            if choque_sala:
+                raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
+
+    nuevo_item = models.SinopticoItem(**datos.model_dump())
+    db.add(nuevo_item)
+    db.commit()
+    db.refresh(nuevo_item)
+    return nuevo_item
 
 @app.put("/api/sinopticos/items/{item_id}", response_model=schemas.SinopticoItemOut)
 def editar_item_sinoptico(
