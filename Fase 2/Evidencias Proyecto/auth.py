@@ -98,7 +98,14 @@ def require_role(*roles: str):
     allowed: set[str] = {r.lower() for r in roles}
 
     def _dep(current_user: models.Usuario = Depends(get_current_user)) -> models.Usuario:
-        user_role = current_user.rol.value.lower() if hasattr(current_user.rol, 'value') else str(current_user.rol).lower()
+        # Extrae de forma segura el valor en texto del rol
+        if hasattr(current_user.rol, 'value'):
+            user_role = str(current_user.rol.value).lower()
+        else:
+            # Si viene como enum o string, extrae la parte posterior al punto si existe
+            raw_role = str(current_user.rol)
+            user_role = raw_role.split('.')[-1].lower() if '.' in raw_role else raw_role.lower()
+
         if user_role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

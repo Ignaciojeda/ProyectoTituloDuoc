@@ -14,6 +14,8 @@ from auth import (
     get_current_user,
     hash_password,
     require_admin,
+    require_coordinador,
+    require_docente,
 )
 
 app = FastAPI(
@@ -22,7 +24,6 @@ app = FastAPI(
     description="Backend desacoplado para consumo desde cliente React"
 )
 
-# Configuración de CORS para permitir conexiones desde React (Vite)
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -39,7 +40,6 @@ app.add_middleware(
 
 Base.metadata.create_all(bind=engine)
 
-# Palabras clave por área
 PALABRA_CLAVE_AREA = {
     "informatica": ["programacion", "base de datos", "software", "sistemas"],
     "redes": ["redes"],
@@ -52,6 +52,11 @@ def area_para_asignatura(nombre_asignatura: str):
         if any(p in nombre for p in palabras):
             return area
     return None
+
+
+@app.get("/")
+def home():
+    return {"status": "online", "mensaje": "API de Sistema de Sinópticos funcionando"}
 
 
 # ===========================================================================
@@ -85,7 +90,7 @@ def obtener_usuario_actual(current_user: models.Usuario = Depends(get_current_us
 # ===========================================================================
 
 @app.get("/api/asignaturas", response_model=List[schemas.AsignaturaOut])
-def listar_asignaturas(carrera_id: Optional[int] = None, db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_asignaturas(carrera_id: Optional[int] = None, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     query = db.query(models.Asignatura).filter(models.Asignatura.activo == True)
     if carrera_id is not None:
         query = query.join(
@@ -95,7 +100,7 @@ def listar_asignaturas(carrera_id: Optional[int] = None, db: Session = Depends(g
 
 
 @app.post("/api/asignaturas", response_model=schemas.AsignaturaOut)
-def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     nueva = models.Asignatura(**datos.model_dump())
     db.add(nueva)
     db.commit()
@@ -104,12 +109,12 @@ def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_
 
 
 @app.get("/api/carreras", response_model=List[schemas.CarreraOut])
-def listar_carreras(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_carreras(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.Carrera).filter(models.Carrera.activo == True).order_by(models.Carrera.nombre).all()
 
 
 @app.post("/api/carreras", response_model=schemas.CarreraOut)
-def crear_carrera(datos: schemas.CarreraCreate, db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def crear_carrera(datos: schemas.CarreraCreate, db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     nueva = models.Carrera(**datos.model_dump())
     db.add(nueva)
     db.commit()
@@ -118,29 +123,29 @@ def crear_carrera(datos: schemas.CarreraCreate, db: Session = Depends(get_db), _
 
 
 @app.get("/api/planes-estudio", response_model=List[schemas.PlanEstudioOut])
-def listar_planes_estudio(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_planes_estudio(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all()
 
 
 @app.get("/api/semestres", response_model=List[schemas.SemestreOut])
-def listar_semestres(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_semestres(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.Semestre).filter(models.Semestre.activo == True).order_by(
         models.Semestre.anio.desc(), models.Semestre.numero.desc()
     ).all()
 
 
 @app.get("/api/profesores", response_model=List[schemas.ProfesorOut])
-def listar_profesores(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_profesores(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.Profesor).filter(models.Profesor.activo == True).all()
 
 
 @app.get("/api/salas", response_model=List[schemas.SalaOut])
-def listar_salas(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_salas(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.Sala).filter(models.Sala.activo == True).all()
 
 
 @app.get("/api/bloques-horario", response_model=List[schemas.BloqueHorarioOut])
-def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.BloqueHorario).order_by(
         models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio
     ).all()
@@ -149,7 +154,7 @@ def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = De
 # --- Algoritmo de Generación e Ítems de Sinóptico ---
 
 @app.post("/api/sinopticos/generar")
-def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     asignaturas = db.query(models.Asignatura).join(
         models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
     ).filter(
@@ -177,7 +182,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     sin_asignar = []
     profesor_carga = defaultdict(int)
     sala_carga = defaultdict(int)
-    bloque_carga = defaultdict(int) # nuevo
+    bloque_carga = defaultdict(int)
 
     for asignatura in asignaturas:
         area_requerida = area_para_asignatura(asignatura.nombre)
@@ -186,7 +191,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
             profesor_carga[p.id]
         ))
         candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
-        candidatos_bloques = sorted(bloques, key=lambda b: bloque_carga[b.id]) # nuevo
+        candidatos_bloques = sorted(bloques, key=lambda b: bloque_carga[b.id])
 
         asignado = False
         for b in candidatos_bloques:
@@ -200,7 +205,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
                     sala_ocupada[s.id].add(b.id)
                     profesor_carga[p.id] += 1
                     sala_carga[s.id] += 1
-                    bloque_carga[b.id] += 1 # nuevo
+                    bloque_carga[b.id] += 1
 
                     item = models.SinopticoItem(
                         sinoptico_id=nuevo_sinoptico.id,
@@ -230,7 +235,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
 
 
 @app.get("/api/sinopticos")
-def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     filas = (
         db.query(models.Sinoptico, models.Carrera, models.Semestre)
         .join(models.Carrera, models.Sinoptico.carrera_id == models.Carrera.id)
@@ -250,7 +255,7 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
 
 
 @app.get("/api/sinopticos/{sinoptico_id}/eventos")
-def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(get_current_user)):
+def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     filas = (
         db.query(models.SinopticoItem, models.Asignatura, models.Profesor, models.Sala, models.BloqueHorario)
         .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
@@ -290,7 +295,7 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
 def eliminar_item_sinoptico(
     item_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
@@ -305,13 +310,12 @@ def mover_item_sinoptico(
     item_id: int,
     datos: schemas.MoverItemRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
-    # Busca el bloque_horario real que corresponde a la celda donde se soltó
     nuevo_bloque = db.query(models.BloqueHorario).filter(
         models.BloqueHorario.dia_semana == datos.dia_semana,
         models.BloqueHorario.hora_inicio == datos.hora_inicio,
@@ -324,11 +328,9 @@ def mover_item_sinoptico(
             detail="No existe un bloque horario registrado para ese día y módulo."
         )
 
-    # Si no cambia nada, no hay nada que validar ni guardar
     if nuevo_bloque.id == item.bloque_horario_id:
         return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
 
-    # Verifica que el profesor de esta clase no tenga OTRA clase en ese nuevo horario
     if item.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
             models.SinopticoItem.id != item_id,
@@ -341,7 +343,6 @@ def mover_item_sinoptico(
                 detail="El profesor de esta clase ya tiene otra clase asignada en ese horario."
             )
 
-    # Verifica que la sala de esta clase no esté ocupada por OTRA clase en ese nuevo horario
     if item.sala_id is not None:
         choque_sala = db.query(models.SinopticoItem).filter(
             models.SinopticoItem.id != item_id,
@@ -359,12 +360,12 @@ def mover_item_sinoptico(
     db.refresh(item)
     return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
 
-# para agregar item al sinoptico manualmente
+
 @app.post("/api/sinopticos/items", response_model=schemas.SinopticoItemOut, status_code=201)
 def agregar__item_sinoptico(
     datos: schemas.SinopticoItemCreate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
     if not sinoptico:
@@ -392,19 +393,18 @@ def agregar__item_sinoptico(
     db.refresh(nuevo_item)
     return nuevo_item
 
+
 @app.put("/api/sinopticos/items/{item_id}", response_model=schemas.SinopticoItemOut)
 def editar_item_sinoptico(
     item_id: int,
     datos: schemas.SinopticoItemUpdate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
-    # Mismas validaciones que al mover: que el profesor y la sala elegidos
-    # no choquen con OTRA clase en ese mismo bloque horario.
     if datos.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
             models.SinopticoItem.id != item_id,
@@ -436,13 +436,11 @@ def editar_item_sinoptico(
 def eliminar_sinoptico(
     sinoptico_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
-    # SinopticoItem tiene ondelete="CASCADE" hacia sinoptico, así que esto
-    # también borra automáticamente todas sus clases.
     db.delete(sinoptico)
     db.commit()
     return None

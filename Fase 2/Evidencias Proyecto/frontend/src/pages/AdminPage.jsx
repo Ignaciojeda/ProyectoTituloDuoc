@@ -1,34 +1,71 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
-import '../duoc.css' // Importación directa de estilos institucionales
+import api from '../api/axios'
+import '../duoc.css'
 
 export default function AdminPage() {
+  const [stats, setStats] = useState({ usuarios: 0, carreras: 0, profesores: 0, sinopticos: 0 })
+
+  useEffect(() => {
+    // Carga paralela de métricas generales para el panel
+    Promise.all([
+      api.get('/admin/usuarios').catch(() => ({ data: [] })),
+      api.get('/carreras').catch(() => ({ data: [] })),
+      api.get('/profesores').catch(() => ({ data: [] })),
+      api.get('/sinopticos').catch(() => ({ data: [] }))
+    ]).then(([u, c, p, s]) => {
+      setStats({
+        usuarios: u.data.length,
+        carreras: c.data.length,
+        profesores: p.data.length,
+        sinopticos: s.data.length
+      })
+    })
+  }, [])
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-main)' }}>
       <Navbar />
-      
+
       <div style={{ padding: '28px 32px 12px 32px' }}>
         <h2 style={{ margin: '0 0 6px 0', color: 'var(--duoc-navy)', fontSize: '24px', fontWeight: '800' }}>
           Panel de Administración
         </h2>
         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '15px' }}>
-          Acceso completo al sistema. Puede gestionar usuarios, carreras, asignaturas y todos los sinópticos.
+          Control global del sistema: gestión de cuentas, configuración institucional y supervisión de sinópticos.
         </p>
       </div>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-        gap: '24px',
-        padding: '24px 32px'
-      }}>
+      {/* Indicadores Clave (KPIs) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', padding: '12px 32px' }}>
+        <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>USUARIOS</span>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.usuarios}</h3>
+        </div>
+        <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>CARRERAS</span>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.carreras}</h3>
+        </div>
+        <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>DOCENTES</span>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.profesores}</h3>
+        </div>
+        <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>SINÓPTICOS</span>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.sinopticos}</h3>
+        </div>
+      </div>
+
+      {/* Tarjetas de Acción */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px', padding: '16px 32px 32px 32px' }}>
         <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
               👥 Gestión de usuarios
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
-              Crear, editar y desactivar cuentas de usuario. Asignar roles (administrador, coordinador, docente).
+              Administración de cuentas, habilitación de usuarios y asignación de roles (Administrador, Coordinador, Docente).
             </p>
           </div>
           <Link to="/admin/usuarios" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
@@ -39,42 +76,28 @@ export default function AdminPage() {
         <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
-              🗓️ Sinópticos
+              🗓️ Planificación de Sinópticos
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
-              Crear, editar y generar automáticamente los sinópticos de cualquier carrera y semestre.
+              Generación automática mediante algoritmos de asignación, resolución manual de choques horarios y eliminación.
             </p>
           </div>
           <Link to="/sinoptico" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Ir a sinópticos
+            Editor de sinópticos
           </Link>
         </div>
 
         <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
-              📚 Datos maestros
+              📚 Módulos y Oferta Académica
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
-              Carreras, planes de estudio, asignaturas, profesores, salas y bloques horarios.
+              Revisar catálogo de asignaturas, infraestructura de salas por edificio y asignaciones de bloques por jornada.
             </p>
           </div>
           <Link to="/sinoptico" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Abrir módulo
-          </Link>
-        </div>
-
-        <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
-              📊 Resumen del sistema
-            </h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
-              Estado general del sistema, conteo de registros y últimos sinópticos generados.
-            </p>
-          </div>
-          <Link to="/sinopticos" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Ver sinópticos
+            Ver datos maestros
           </Link>
         </div>
       </div>
