@@ -6,6 +6,7 @@ import '../duoc.css'
 
 export default function AdminPage() {
   const [stats, setStats] = useState({ usuarios: 0, carreras: 0, profesores: 0, sinopticos: 0 })
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     // Carga paralela de métricas generales para el panel
@@ -16,11 +17,12 @@ export default function AdminPage() {
       api.get('/sinopticos').catch(() => ({ data: [] }))
     ]).then(([u, c, p, s]) => {
       setStats({
-        usuarios: u.data.length,
-        carreras: c.data.length,
-        profesores: p.data.length,
-        sinopticos: s.data.length
+        usuarios: Array.isArray(u.data) ? u.data.length : 0,
+        carreras: Array.isArray(c.data) ? c.data.length : 0,
+        profesores: Array.isArray(p.data) ? p.data.length : 0,
+        sinopticos: Array.isArray(s.data) ? s.data.length : 0
       })
+      setLoading(false)
     })
   }, [])
 
@@ -41,19 +43,27 @@ export default function AdminPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', padding: '12px 32px' }}>
         <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>USUARIOS</span>
-          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.usuarios}</h3>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>
+            {loading ? '...' : stats.usuarios}
+          </h3>
         </div>
         <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>CARRERAS</span>
-          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.carreras}</h3>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>
+            {loading ? '...' : stats.carreras}
+          </h3>
         </div>
         <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>DOCENTES</span>
-          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.profesores}</h3>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>
+            {loading ? '...' : stats.profesores}
+          </h3>
         </div>
         <div className="duoc-card" style={{ padding: '16px', textAlign: 'center' }}>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>SINÓPTICOS</span>
-          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>{stats.sinopticos}</h3>
+          <h3 style={{ margin: '4px 0 0 0', color: 'var(--duoc-navy)', fontSize: '22px' }}>
+            {loading ? '...' : stats.sinopticos}
+          </h3>
         </div>
       </div>
 
