@@ -88,6 +88,8 @@ export default function SinopticoPage() {
     bloque_horario_id: '',
   })
 
+  const [bloqueFijo, setBloqueFijo] = useState(false)
+
   const cargarEventosSinoptico = async (id) => {
     try {
       const { data } = await api.get(`/sinopticos/${id}/eventos`)
@@ -199,11 +201,38 @@ export default function SinopticoPage() {
       sala_id: '',
       bloque_horario_id: '',
     })
+    setBloqueFijo(false)
     setAgregandoNuevo(true)
   }
 
   const cerrarFormularioNuevo = () => {
     setAgregandoNuevo(false)
+    setBloqueFijo(false)
+  }
+
+  const abrirNuevoEnCelda = (diaKey, moduloLabel) => {
+    if (!sinopticoSel) {
+      setMensaje('Primero seleccione un sinóptico existente.')
+      return
+    }
+
+    const horaIni = moduloLabel.split(' A ')[0]
+    const candidatos = bloquesHorario.filter(
+      b => b.dia_semana === diaKey && b.hora_inicio.slice(0, 5) === horaIni
+    )
+    const bloque = candidatos.find(b => b.jornada === jornadaSel) || candidatos[0]
+    if (!bloque) {
+      setMensaje('No existe un bloque horario para esa celda.')
+      return
+    }
+    setNuevoItem({
+      asignatura_id: '',
+      profesor_id: '',
+      sala_id: '',
+      bloque_horario_id: String(bloque.id),
+    })
+    setBloqueFijo(true)
+    setAgregandoNuevo(true)
   }
 
   const guardarNuevoItem = async () => {
@@ -384,7 +413,7 @@ export default function SinopticoPage() {
             <h3 style={{ margin: 0, color: 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800' }}>
               BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES
             </h3>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Jornada: Diurno · Arrastre los bloques para cambiar de horario</span>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Jornada: Diurno · Haga click en una celda vacia para agregar un ramo · Arrastre los bloques para cambiar de horario</span>
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'sans-serif', tableLayout: 'fixed' }}>
@@ -415,7 +444,22 @@ export default function SinopticoPage() {
                         key={d.key}
                         onDragOver={handleDragOver}
                         onDrop={(e) => handleDrop(e, d.key, m.label)}
-                        style={{ padding: '1px 2px', border: '1px solid #cbd5e1', verticalAlign: 'middle', height: '24px' }}
+                        onClick={() => { if (!clase) abrirNuevoEnCelda(d.key, m.label) }}
+                        style={{ padding: '1px 2px', border: '1px solid #cbd5e1', verticalAlign: 'middle', height: '24px', cursor: clase ? 'default' : 'pointer', position: 'relative', transition: 'background-color 0.15s ease' }}
+                        onMouseEnter={(e) => {
+                          if (!clase) {
+                            e.currentTarget.style.backgroundColor = '#eef6ff'
+                            const plus = e.currentTarget.querySelector('.celda-plus')
+                            if (plus) plus.style.opacity = '1'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!clase) {
+                            e.currentTarget.style.backgroundColor = ''
+                            const plus = e.currentTarget.querySelector('.celda-plus')
+                            if (plus) plus.style.opacity = '0'
+                          }
+                        }}
                       >
                         {clase ? (
                           <div
@@ -479,7 +523,25 @@ export default function SinopticoPage() {
                               {clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
                             </div>
                           </div>
-                        ) : null}
+                        ) : (
+                          <div
+                            className="celda-plus"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              height: '100%',
+                              color: 'var(--duoc-blue-accent)',
+                              fontSize: '16px',
+                              fontWeight: 'bold',
+                              opacity: 0,
+                              transition: 'opacity 0.15s ease',
+                              pointerEvents: 'none'
+                            }}
+                          >
+                            +
+                          </div>
+                        )}
                       </td>
                     )
                   })}
@@ -659,6 +721,7 @@ export default function SinopticoPage() {
                 className="duoc-select"
                 style={{ padding: '6px 8px', fontSize: '12px' }}
                 value={nuevoItem.bloque_horario_id}
+                disabled={bloqueFijo}
                 onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
               >
                 <option value="">-- Seleccionar --</option>

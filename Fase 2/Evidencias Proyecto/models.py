@@ -147,6 +147,7 @@ class Sinoptico(Base):
     id = Column(Integer, primary_key=True)
     carrera_id = Column(Integer, ForeignKey("carrera.id"), nullable=False)
     semestre_id = Column(Integer, ForeignKey("semestre.id"), nullable=False)
+    jornada = Column(Enum(JornadaTipo), nullable=False)
     creado_en = Column(DateTime, server_default=func.now())
 
 

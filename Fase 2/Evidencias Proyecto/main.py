@@ -175,7 +175,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     profesor_ocupado = defaultdict(set)
     sala_ocupada = defaultdict(set)
 
-    nuevo_sinoptico = models.Sinoptico(carrera_id=datos.carrera_id, semestre_id=datos.semestre_id)
+    nuevo_sinoptico = models.Sinoptico(carrera_id=datos.carrera_id, semestre_id=datos.semestre_id, jornada=datos.jornada)
     db.add(nuevo_sinoptico)
     db.flush()
 
