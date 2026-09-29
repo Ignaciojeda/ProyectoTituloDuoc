@@ -1,21 +1,7 @@
-from datetime import date, time
+from datetime import date, time, datetime
 from pydantic import BaseModel, EmailStr, Field
-from models import JornadaTipo, AreaDocenteTipo, RolUsuario
+from models import JornadaTipo, AreaDocenteTipo, RolUsuario, EdificioTipo
 from typing import Optional
-
-
-# --- Asignatura ---
-class AsignaturaCreate(BaseModel):
-    codigo: str
-    nombre: str
-    plan_estudio_id: Optional[int] = None
-    horas: Optional[int] = None
-
-class AsignaturaOut(AsignaturaCreate):
-    id: int
-
-    class Config:
-        from_attributes = True
 
 
 # --- Carrera ---
@@ -46,28 +32,41 @@ class PlanEstudioOut(PlanEstudioCreate):
 
 
 # --- Semestre ---
-class SemestreCreate(BaseModel):
+class SemestreOut(BaseModel):
+    id: int
     anio: int
     numero: int
     fecha_inicio: date
     fecha_fin: date
-
-class SemestreOut(SemestreCreate):
-    id: int
+    activo: bool
 
     class Config:
         from_attributes = True
 
 
 # --- Profesor ---
-class ProfesorCreate(BaseModel):
+class ProfesorOut(BaseModel):
+    id: int
     rut: str
     nombre: str
     apellido: str
     email: str
     area_docente: AreaDocenteTipo
+    activo: bool
 
-class ProfesorOut(ProfesorCreate):
+    class Config:
+        from_attributes = True
+
+
+# --- Asignatura (SIN jornada: eso vive en el bloque horario) ---
+class AsignaturaCreate(BaseModel):
+    codigo: str
+    nombre: str
+    plan_estudio_id: Optional[int] = None
+    horas: Optional[int] = None
+    nivel_semestral: Optional[int] = None
+
+class AsignaturaOut(AsignaturaCreate):
     id: int
 
     class Config:
@@ -75,28 +74,24 @@ class ProfesorOut(ProfesorCreate):
 
 
 # --- Sala ---
-class SalaCreate(BaseModel):
-    nombre: str
-    edificio: str
-    cantidad_sillas: int
-    piso: Optional[int] = None
-
-class SalaOut(SalaCreate):
+class SalaOut(BaseModel):
     id: int
+    nombre: str
+    edificio: EdificioTipo
+    cantidad_sillas: int
+    activo: bool
 
     class Config:
         from_attributes = True
 
 
 # --- Bloque horario ---
-class BloqueHorarioCreate(BaseModel):
-    dia_semana: int
+class BloqueHorarioOut(BaseModel):
+    id: int
+    dia_semana: int = Field(ge=1, le=6)  # 1=Lunes ... 6=Sábado
     hora_inicio: time
     hora_fin: time
     jornada: JornadaTipo
-
-class BloqueHorarioOut(BloqueHorarioCreate):
-    id: int
 
     class Config:
         from_attributes = True
@@ -109,18 +104,15 @@ class GenerarSinopticoRequest(BaseModel):
     jornada: JornadaTipo
 
 
-# --- Sinóptico ---
-class SinopticoCreate(BaseModel):
-    carrera_id: int
-    semestre_id: int
-
-class SinopticoOut(SinopticoCreate):
-    id: int
-
-    class Config:
-        from_attributes = True
+# --- Mover ítem (drag and drop) ---
+class MoverItemRequest(BaseModel):
+    dia_semana: int = Field(ge=1, le=6)
+    hora_inicio: time
+    hora_fin: time
+    jornada: JornadaTipo
 
 
+# --- Sinóptico item (clase individual dentro de un sinóptico) ---
 class SinopticoItemCreate(BaseModel):
     sinoptico_id: int
     asignatura_id: int
@@ -128,28 +120,25 @@ class SinopticoItemCreate(BaseModel):
     sala_id: Optional[int] = None
     bloque_horario_id: int
 
-class SinopticoItemOut(SinopticoItemCreate):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-
-class MoverItemRequest(BaseModel):
-    dia_semana: int
-    hora_inicio: time
-    hora_fin: time
-    jornada: JornadaTipo
-
-
 class SinopticoItemUpdate(BaseModel):
     asignatura_id: int
     profesor_id: Optional[int] = None
     sala_id: Optional[int] = None
     bloque_horario_id: int
 
+class SinopticoItemOut(BaseModel):
+    id: int
+    sinoptico_id: int
+    asignatura_id: int
+    profesor_id: Optional[int] = None
+    sala_id: Optional[int] = None
+    bloque_horario_id: int
 
-# --- Usuario Out ---
+    class Config:
+        from_attributes = True
+
+
+# --- Usuario ---
 class UsuarioOut(BaseModel):
     id: int
     nombre: str
@@ -161,19 +150,6 @@ class UsuarioOut(BaseModel):
         from_attributes = True
 
 
-# --- Auth / Tokens ---
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=4)
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: UsuarioOut
-
-
-# --- Usuario CRUD ---
 class UsuarioCreate(BaseModel):
     nombre: str = Field(min_length=2, max_length=100)
     email: EmailStr
@@ -181,9 +157,12 @@ class UsuarioCreate(BaseModel):
     rol: RolUsuario = RolUsuario.coordinador
 
 
-class UsuarioUpdate(BaseModel):
-    nombre: Optional[str] = None
-    email: Optional[EmailStr] = None
-    password: Optional[str] = Field(default=None, min_length=6, max_length=128)
-    rol: Optional[RolUsuario] = None
-    activo: Optional[bool] = None
+# --- Auth ---
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=4)
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UsuarioOut
