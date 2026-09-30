@@ -147,15 +147,23 @@ class Sinoptico(Base):
     id = Column(Integer, primary_key=True)
     carrera_id = Column(Integer, ForeignKey("carrera.id"), nullable=False)
     semestre_id = Column(Integer, ForeignKey("semestre.id"), nullable=False)
-    jornada = Column(Enum(JornadaTipo), nullable=False)
     creado_en = Column(DateTime, server_default=func.now())
 
 
 class SinopticoItem(Base):
     """Una clase dentro de un sinóptico: asignatura + profesor +
     sala + bloque horario. profesor_id y sala_id son nullable
-    (una clase puede quedar 'sin asignar' temporalmente)."""
+    (una clase puede quedar 'sin asignar' temporalmente).
+
+    Las UNIQUE son la garantía real anti-choque: aunque dos
+    personas guarden al mismo tiempo, la base de datos solo deja
+    pasar a la primera. NULL no cuenta como choque (varias clases
+    'sin profesor' pueden compartir bloque sin problema)."""
     __tablename__ = "sinoptico_item"
+    __table_args__ = (
+        UniqueConstraint("profesor_id", "bloque_horario_id", name="uq_item_profesor_bloque"),
+        UniqueConstraint("sala_id", "bloque_horario_id", name="uq_item_sala_bloque"),
+    )
 
     id = Column(Integer, primary_key=True)
     sinoptico_id = Column(Integer, ForeignKey("sinoptico.id", ondelete="CASCADE"), nullable=False)
@@ -173,6 +181,19 @@ class SinopticoItem(Base):
     codigo_seccion = Column(String(30), nullable=True)
     fecha_inicio = Column(Date, nullable=True)
     fecha_final = Column(Date, nullable=True)
+
+
+class LoginLog(Base):
+    """Registro de auditoría: cada intento de login, exitoso o no."""
+    __tablename__ = "login_log"
+
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey("usuario.id", ondelete="SET NULL"), nullable=True)
+    email_intentado = Column(String(150), nullable=False)
+    exito = Column(Boolean, nullable=False)
+    motivo_fallo = Column(String(100), nullable=True)
+    ip_origen = Column(String(45), nullable=True)
+    creado_en = Column(DateTime, server_default=func.now())
 
 
 class Usuario(Base):

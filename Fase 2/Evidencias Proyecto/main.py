@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -64,14 +64,38 @@ def home():
 # ===========================================================================
 
 @app.post("/api/auth/login", response_model=schemas.TokenResponse)
-def login(datos: schemas.LoginRequest, db: Session = Depends(get_db)):
+def login(datos: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
+    ip = request.client.host if request.client else None
     user = authenticate_user(db, datos.email, datos.password)
+
     if not user:
+        db.add(models.LoginLog(
+            usuario_id=None, email_intentado=str(datos.email).lower(),
+            exito=False, motivo_fallo="credenciales inválidas", ip_origen=ip,
+        ))
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas",
         )
-    
+
+    if not user.activo:
+        db.add(models.LoginLog(
+            usuario_id=user.id, email_intentado=str(datos.email).lower(),
+            exito=False, motivo_fallo="cuenta inactiva", ip_origen=ip,
+        ))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta cuenta está deshabilitada. Contacte al administrador.",
+        )
+
+    db.add(models.LoginLog(
+        usuario_id=user.id, email_intentado=str(datos.email).lower(),
+        exito=True, motivo_fallo=None, ip_origen=ip,
+    ))
+    db.commit()
+
     access_token = create_access_token(data={"sub": str(user.id)})
     return {
         "access_token": access_token,
@@ -175,7 +199,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     profesor_ocupado = defaultdict(set)
     sala_ocupada = defaultdict(set)
 
-    nuevo_sinoptico = models.Sinoptico(carrera_id=datos.carrera_id, semestre_id=datos.semestre_id, jornada=datos.jornada)
+    nuevo_sinoptico = models.Sinoptico(carrera_id=datos.carrera_id, semestre_id=datos.semestre_id)
     db.add(nuevo_sinoptico)
     db.flush()
 
@@ -356,7 +380,14 @@ def mover_item_sinoptico(
             )
 
     item.bloque_horario_id = nuevo_bloque.id
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ese profesor o esa sala ya quedaron ocupados en ese horario justo antes de guardar. Actualiza la página e intenta de nuevo."
+        )
     db.refresh(item)
     return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
 
@@ -389,7 +420,14 @@ def agregar__item_sinoptico(
 
     nuevo_item = models.SinopticoItem(**datos.model_dump())
     db.add(nuevo_item)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ese profesor o esa sala ya quedaron ocupados en ese horario justo antes de guardar. Actualiza la página e intenta de nuevo."
+        )
     db.refresh(nuevo_item)
     return nuevo_item
 
@@ -427,7 +465,14 @@ def editar_item_sinoptico(
     item.profesor_id = datos.profesor_id
     item.sala_id = datos.sala_id
     item.bloque_horario_id = datos.bloque_horario_id
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ese profesor o esa sala ya quedaron ocupados en ese horario justo antes de guardar. Actualiza la página e intenta de nuevo."
+        )
     db.refresh(item)
     return item
 
@@ -476,6 +521,15 @@ def crear_usuario(
         raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
     db.refresh(nuevo)
     return nuevo
+
+
+@app.get("/api/admin/auditoria", response_model=List[schemas.LoginLogOut])
+def listar_auditoria(
+    limite: int = 100,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_admin),
+):
+    return db.query(models.LoginLog).order_by(models.LoginLog.creado_en.desc()).limit(limite).all()
 
 
 @app.delete("/api/admin/usuarios/{usuario_id}", status_code=204)

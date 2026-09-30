@@ -157,6 +157,20 @@ class UsuarioCreate(BaseModel):
     rol: RolUsuario = RolUsuario.coordinador
 
 
+# --- Auditoría ---
+class LoginLogOut(BaseModel):
+    id: int
+    usuario_id: Optional[int] = None
+    email_intentado: str
+    exito: bool
+    motivo_fallo: Optional[str] = None
+    ip_origen: Optional[str] = None
+    creado_en: datetime
+
+    class Config:
+        from_attributes = True
+
+
 # --- Auth ---
 class LoginRequest(BaseModel):
     email: EmailStr
