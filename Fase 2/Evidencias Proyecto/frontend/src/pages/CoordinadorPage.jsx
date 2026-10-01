@@ -28,8 +28,11 @@ export default function CoordinadorPage() {
               Ejecute el algoritmo de asignación automática de bloques o arrastre los módulos para resolver solapamientos.
             </p>
           </div>
-          <Link to="/sinoptico" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Gestionar sinópticos
+          <Link to="/sinopticos/galeria" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
+            Ver sinópticos
+          </Link>
+          <Link to="/sinoptico" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '8px', boxSizing: 'border-box' }}>
+            Crear un sinóptico nuevo
           </Link>
         </div>
 

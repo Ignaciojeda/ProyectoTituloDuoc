@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/axios'
 import '../duoc.css'
@@ -29,6 +30,9 @@ const DIAS_SEMANA = [
 ]
 
 export default function SinopticoPage() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+
   const [carreras, setCarreras] = useState([])
   const [semestres, setSemestres] = useState([])
   const [sinopticosExistentes, setSinopticosExistentes] = useState([])
@@ -79,6 +83,16 @@ export default function SinopticoPage() {
       .then(res => setBloquesHorario(res.data))
       .catch(err => console.error('Error bloques horario:', err))
   }, [])
+
+  // Si se llega desde la galería con ?id=X, abre ese sinóptico directamente
+  useEffect(() => {
+    const idDesdeUrl = searchParams.get('id')
+    if (idDesdeUrl) {
+      setSinopticoSel(idDesdeUrl)
+      cargarEventosSinoptico(idDesdeUrl)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const [agregandoNuevo, setAgregandoNuevo] = useState(false)
   const [nuevoItem, setNuevoItem] = useState({
@@ -327,6 +341,17 @@ export default function SinopticoPage() {
       <div style={{ display: 'flex', gap: '16px', padding: '16px 24px' }}>
         {/* PANEL IZQUIERDO */}
         <div className="duoc-card" style={{ width: '270px', height: 'fit-content', padding: '14px' }}>
+          <button
+            onClick={() => navigate('/sinopticos/galeria')}
+            style={{
+              width: '100%', marginBottom: '12px', padding: '7px 10px', fontSize: '12px',
+              border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+              background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            📂 Ver todos los sinópticos
+          </button>
+
           <h2 style={{ fontSize: '15px', margin: '0 0 10px 0', color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px' }}>
             1. Elegir carrera y semestre
           </h2>

@@ -92,8 +92,11 @@ export default function AdminPage() {
               Generación automática mediante algoritmos de asignación, resolución manual de choques horarios y eliminación.
             </p>
           </div>
-          <Link to="/sinoptico" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Editor de sinópticos
+          <Link to="/sinopticos/galeria" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
+            Ver sinópticos
+          </Link>
+          <Link to="/sinoptico" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '8px', boxSizing: 'border-box' }}>
+            Crear un sinóptico nuevo
           </Link>
         </div>
 

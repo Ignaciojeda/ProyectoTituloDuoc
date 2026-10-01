@@ -5,6 +5,7 @@ import AdminUsers from './pages/AdminUsers'
 import CoordinadorPage from './pages/CoordinadorPage'
 import DocentePage from './pages/DocentePage'
 import SinopticoPage from './pages/SinopticoPage'
+import SinopticosGaleria from './pages/SinopticosGaleria'
 import ProtectedRoute from './components/ProtectedRoute'
 
 export default function App() {
@@ -36,6 +37,9 @@ export default function App() {
         } />
         <Route path="/sinopticos" element={
           <ProtectedRoute rolesPermitidos={['coordinador', 'administrador']}><SinopticoPage /></ProtectedRoute>
+        } />
+        <Route path="/sinopticos/galeria" element={
+          <ProtectedRoute rolesPermitidos={['coordinador', 'administrador']}><SinopticosGaleria /></ProtectedRoute>
         } />
 
         <Route path="*" element={<Navigate to="/login" replace />} />
