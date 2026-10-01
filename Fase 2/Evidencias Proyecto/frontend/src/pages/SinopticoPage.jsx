@@ -32,6 +32,7 @@ const DIAS_SEMANA = [
 export default function SinopticoPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const [panelAbierto, setPanelAbierto] = useState(true)
 
   const [carreras, setCarreras] = useState([])
   const [semestres, setSemestres] = useState([])
@@ -340,17 +341,30 @@ export default function SinopticoPage() {
 
       <div style={{ display: 'flex', gap: '16px', padding: '16px 24px' }}>
         {/* PANEL IZQUIERDO */}
+        {panelAbierto ? (
         <div className="duoc-card" style={{ width: '270px', height: 'fit-content', padding: '14px' }}>
-          <button
-            onClick={() => navigate('/sinopticos/galeria')}
-            style={{
-              width: '100%', marginBottom: '12px', padding: '7px 10px', fontSize: '12px',
-              border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
-              background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer', fontWeight: 600,
-            }}
-          >
-            📂 Ver todos los sinópticos
-          </button>
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+            <button
+              onClick={() => navigate('/sinopticos/galeria')}
+              style={{
+                width: '90%', marginBottom: '12px', padding: '7px 10px', fontSize: '12px',
+                border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+                background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              📂 Ver todos los sinópticos
+            </button>
+            <button
+              onClick={() => setPanelAbierto(false)}
+              title="Ocultar panel"
+              style={{ width: '30px', marginBottom: '12px', padding: '0 4px', fontSize: '13px',
+                border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+                background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer', fontWeight: 800 }}
+            >
+              «
+            </button>
+          </div>
+          
 
           <h2 style={{ fontSize: '15px', margin: '0 0 10px 0', color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px' }}>
             1. Elegir carrera y semestre
@@ -431,6 +445,18 @@ export default function SinopticoPage() {
             </button>
           </div>
         </div>
+        ) : (
+          <button
+            onClick={() => setPanelAbierto(true)}
+            title="Expandir panel"
+            className="duoc-card"
+            style={{ width: '30px', height: 'fit-content', padding: '6px 0', fontSize: '13px',
+                border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+                background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer', fontWeight: 800 }}
+          >
+            »
+          </button>
+        )}
 
         {/* TABLA HORARIO COMPACTA AL MÁXIMO */}
         <div className="duoc-card" style={{ flex: 1, padding: '12px', overflowX: 'auto' }}>
