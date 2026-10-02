@@ -4,6 +4,16 @@ from models import JornadaTipo, AreaDocenteTipo, RolUsuario, EdificioTipo
 from typing import Optional
 
 
+# --- Jornada ---
+class JornadaOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+
+    class Config:
+        from_attributes = True
+
+
 # --- Carrera ---
 class CarreraCreate(BaseModel):
     codigo: str
@@ -58,7 +68,7 @@ class ProfesorOut(BaseModel):
         from_attributes = True
 
 
-# --- Asignatura (SIN jornada: eso vive en el bloque horario) ---
+# --- Asignatura ---
 class AsignaturaCreate(BaseModel):
     codigo: str
     nombre: str
@@ -88,7 +98,7 @@ class SalaOut(BaseModel):
 # --- Bloque horario ---
 class BloqueHorarioOut(BaseModel):
     id: int
-    dia_semana: int = Field(ge=1, le=6)  # 1=Lunes ... 6=Sábado
+    dia_semana: int = Field(ge=1, le=6)
     hora_inicio: time
     hora_fin: time
     jornada: JornadaTipo
@@ -104,7 +114,7 @@ class GenerarSinopticoRequest(BaseModel):
     jornada: JornadaTipo
 
 
-# --- Mover ítem (drag and drop) ---
+# --- Mover ítem ---
 class MoverItemRequest(BaseModel):
     dia_semana: int = Field(ge=1, le=6)
     hora_inicio: time
@@ -112,27 +122,28 @@ class MoverItemRequest(BaseModel):
     jornada: JornadaTipo
 
 
-# --- Sinóptico item (clase individual dentro de un sinóptico) ---
+# --- Sinóptico Item ---
 class SinopticoItemCreate(BaseModel):
     sinoptico_id: int
     asignatura_id: int
     profesor_id: Optional[int] = None
     sala_id: Optional[int] = None
     bloque_horario_id: int
+    jornada_id: Optional[int] = None
+    id_seccion: Optional[str] = None
+    seccion: Optional[str] = None
 
 class SinopticoItemUpdate(BaseModel):
     asignatura_id: int
     profesor_id: Optional[int] = None
     sala_id: Optional[int] = None
     bloque_horario_id: int
+    jornada_id: Optional[int] = None
+    id_seccion: Optional[str] = None
+    seccion: Optional[str] = None
 
-class SinopticoItemOut(BaseModel):
+class SinopticoItemOut(SinopticoItemCreate):
     id: int
-    sinoptico_id: int
-    asignatura_id: int
-    profesor_id: Optional[int] = None
-    sala_id: Optional[int] = None
-    bloque_horario_id: int
 
     class Config:
         from_attributes = True
