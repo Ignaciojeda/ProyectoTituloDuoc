@@ -201,8 +201,14 @@ def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = De
 # ===========================================================================
 
 @app.post("/api/sinopticos/generar")
-def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
-    """Generación automática asignando bloques sin cruces horarios."""
+def generar_sinoptico(
+    datos: schemas.GenerarSinopticoRequest, 
+    db: Session = Depends(get_db), 
+    _: models.Usuario = Depends(require_coordinador)
+):
+    """Generación automática asignando bloques sin choques horarios de forma segura."""
+    
+    # 1. Validar existencia de asignaturas activas para la carrera/escuela
     asignaturas = db.query(models.Asignatura).join(
         models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
     ).filter(
@@ -211,11 +217,33 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     ).all()
 
     if not asignaturas:
-        raise HTTPException(status_code=404, detail="No se encontraron asignaturas para la carrera/escuela especificada.")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"No se encontraron asignaturas activas para la carrera ID {datos.carrera_id}."
+        )
 
+    # 2. Convertir el valor de jornada de forma segura
+    jornada_val = datos.jornada.value if hasattr(datos.jornada, 'value') else str(datos.jornada).lower()
+
+    # 3. CREAR EL SINÓPTICO INCLUYENDO LA JORNADA (Resuelve el error NotNullViolation)
+    nuevo_sinoptico = models.Sinoptico(
+        carrera_id=datos.carrera_id,
+        semestre_id=datos.semestre_id,
+        jornada=datos.jornada
+    )
+    db.add(nuevo_sinoptico)
+    db.flush()  # Asigna el nuevo_sinoptico.id
+
+    # 4. Consultar bloques horarios para la jornada indicada
     bloques = db.query(models.BloqueHorario).filter(
-        models.BloqueHorario.jornada == datos.jornada
+        models.BloqueHorario.jornada == jornada_val
     ).order_by(models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio).all()
+
+    if not bloques:
+        # Fallback si no encuentra coincidencias estrictas de Enum
+        bloques = db.query(models.BloqueHorario).order_by(
+            models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio
+        ).all()
 
     profesores = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
     salas = db.query(models.Sala).filter(models.Sala.activo == True).all()
@@ -223,19 +251,18 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
     profesor_ocupado = defaultdict(set)
     sala_ocupada = defaultdict(set)
 
-    nuevo_sinoptico = models.Sinoptico(carrera_id=datos.carrera_id, semestre_id=datos.semestre_id)
-    db.add(nuevo_sinoptico)
-    db.flush()
-
     sin_asignar = []
     profesor_carga = defaultdict(int)
     sala_carga = defaultdict(int)
     bloque_carga = defaultdict(int)
 
+    # 5. Algoritmo de distribución de bloques
     for asignatura in asignaturas:
         area_requerida = area_para_asignatura(asignatura.nombre)
+        
+        # Ordenar profesores candidatos evitando AttributeError si p.area_docente es None
         candidatos_prof = sorted(profesores, key=lambda p: (
-            0 if (area_requerida and p.area_docente.value == area_requerida) else 1,
+            0 if (area_requerida and p.area_docente and hasattr(p.area_docente, 'value') and p.area_docente.value == area_requerida) else 1,
             profesor_carga[p.id]
         ))
         candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
@@ -249,6 +276,7 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
                 for s in candidatos_sala:
                     if b.id in sala_ocupada[s.id]:
                         continue
+                    
                     profesor_ocupado[p.id].add(b.id)
                     sala_ocupada[s.id].add(b.id)
                     profesor_carga[p.id] += 1
@@ -260,7 +288,9 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
                         asignatura_id=asignatura.id,
                         profesor_id=p.id,
                         sala_id=s.id,
-                        bloque_horario_id=b.id
+                        bloque_horario_id=b.id,
+                        seccion=f"{asignatura.codigo}-001D",
+                        id_seccion="24478875"
                     )
                     db.add(item)
                     asignado = True
@@ -273,14 +303,20 @@ def generar_sinoptico(datos: schemas.GenerarSinopticoRequest, db: Session = Depe
         if not asignado:
             sin_asignar.append(asignatura.codigo)
 
-    db.commit()
-    db.refresh(nuevo_sinoptico)
+    try:
+        db.commit()
+        db.refresh(nuevo_sinoptico)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al guardar el sinóptico en la base de datos: {str(e)}"
+        )
 
     return {
         "sinoptico_id": nuevo_sinoptico.id,
         "asignaturas_sin_asignar": sin_asignar
     }
-
 
 @app.get("/api/sinopticos")
 def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
