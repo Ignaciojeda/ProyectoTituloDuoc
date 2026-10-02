@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 from typing import Optional, List
+from datetime import date, timedelta
+from sqlalchemy import func
 
 from database import engine, get_db, Base
 import models
@@ -60,6 +62,19 @@ def area_para_asignatura(nombre_asignatura: str):
             return area
     return None
 
+LUNES_INICIO_SEMESTRE = date(2026, 8, 10)
+SEMANAS_DEFAULT = 17
+
+def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
+    inicio = LUNES_INICIO_SEMESTRE + timedelta(days=dia_semana - 1)
+    fin = inicio + timedelta(weeks=semanas)
+    return inicio, fin
+
+def obtener_jornada_id(db, jornada):
+    valor = (jornada.value if hasattr(jornada, 'value') else str(jornada)).lower()
+    fila = db.query(models.Jornada).filter(func.lower(models.Jornada.nombre) == valor).first()
+    return fila.id if fila else None
+    
 
 @app.get("/")
 def home():
@@ -233,6 +248,7 @@ def generar_sinoptico(
     )
     db.add(nuevo_sinoptico)
     db.flush()  # Asigna el nuevo_sinoptico.id
+    jornada_id = obtener_jornada_id(db, datos.jornada)
 
     # 4. Consultar bloques horarios para la jornada indicada
     bloques = db.query(models.BloqueHorario).filter(
@@ -282,6 +298,7 @@ def generar_sinoptico(
                     profesor_carga[p.id] += 1
                     sala_carga[s.id] += 1
                     bloque_carga[b.id] += 1
+                    inicio, fin = fechas_para_bloque(b.dia_semana)
 
                     item = models.SinopticoItem(
                         sinoptico_id=nuevo_sinoptico.id,
@@ -290,7 +307,10 @@ def generar_sinoptico(
                         sala_id=s.id,
                         bloque_horario_id=b.id,
                         seccion=f"{asignatura.codigo}-001D",
-                        id_seccion="24478875"
+                        id_seccion="24478875",
+                        fecha_inicio=inicio,
+                        fecha_final=fin,
+                        jornada_id=jornada_id,
                     )
                     db.add(item)
                     asignado = True
@@ -375,6 +395,7 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
                 "sala_id": item.sala_id,
                 "bloque_horario_id": item.bloque_horario_id,
                 "jornada_id": item.jornada_id,
+                "capacidad_inicial": item.capacidad_inicial,
             }
         })
     return eventos
@@ -389,6 +410,13 @@ def agregar_item_sinoptico(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+
+    bloque = db.query(models.BloqueHorario).filter(
+        models.BloqueHorario.id == datos.bloque_horario_id
+    ).first()
+    if not bloque:
+        raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
+    inicio, fin = fechas_para_bloque(bloque.dia_semana)
 
     if datos.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
@@ -406,7 +434,9 @@ def agregar_item_sinoptico(
         if choque_sala:
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
-    nuevo_item = models.SinopticoItem(**datos.model_dump())
+    campos = datos.model_dump()
+    campos["jornada_id"] = campos.get('jornada_id') or obtener_jornada_id(db, sinoptico.jornada)
+    nuevo_item = models.SinopticoItem(**campos, fecha_inicio=inicio, fecha_final=fin)
     db.add(nuevo_item)
     try:
         db.commit()
@@ -431,6 +461,12 @@ def editar_item_sinoptico(
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
+    bloque = db.query(models.BloqueHorario).filter(
+        models.BloqueHorario.id == datos.bloque_horario_id
+    ).first()
+    if not bloque:
+        raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
+
     if datos.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
             models.SinopticoItem.id != item_id,
@@ -449,13 +485,19 @@ def editar_item_sinoptico(
         if choque_sala:
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
+    if datos.jornada_id is not None:
+        item.jornada_id = datos.jornada_id
+    elif item.jornada_id is None:
+        item.jornada_id = obtener_jornada_id(db, item.sinoptico.jornada)
+
     item.asignatura_id = datos.asignatura_id
     item.profesor_id = datos.profesor_id
     item.sala_id = datos.sala_id
     item.bloque_horario_id = datos.bloque_horario_id
-    item.jornada_id = datos.jornada_id
     item.id_seccion = datos.id_seccion
     item.seccion = datos.seccion
+    item.capacidad_inicial = datos.capacidad_inicial
+    item.fecha_inicio, item.fecha_final = fechas_para_bloque(bloque.dia_semana)
 
     try:
         db.commit()
@@ -520,6 +562,7 @@ def mover_item_sinoptico(
                 detail="La sala de esta clase ya está ocupada por otra clase en ese horario."
             )
 
+    item.fecha_inicio, item.fecha_final = fechas_para_bloque(nuevo_bloque.dia_semana)
     item.bloque_horario_id = nuevo_bloque.id
     try:
         db.commit()

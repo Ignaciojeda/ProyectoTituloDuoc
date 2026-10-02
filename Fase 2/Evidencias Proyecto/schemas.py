@@ -132,6 +132,7 @@ class SinopticoItemCreate(BaseModel):
     jornada_id: Optional[int] = None
     id_seccion: Optional[str] = None
     seccion: Optional[str] = None
+    capacidad_inicial: Optional[int] = None
 
 class SinopticoItemUpdate(BaseModel):
     asignatura_id: int
@@ -141,9 +142,11 @@ class SinopticoItemUpdate(BaseModel):
     jornada_id: Optional[int] = None
     id_seccion: Optional[str] = None
     seccion: Optional[str] = None
+    capacidad_inicial: Optional[int] = None
 
 class SinopticoItemOut(SinopticoItemCreate):
     id: int
+    capacidad_inicial: Optional[int] = None
 
     class Config:
         from_attributes = True

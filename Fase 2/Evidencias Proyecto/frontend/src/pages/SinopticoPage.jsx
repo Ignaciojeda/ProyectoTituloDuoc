@@ -36,6 +36,8 @@ export default function SinopticoPage() {
 
   const [carreras, setCarreras] = useState([])
   const [semestres, setSemestres] = useState([])
+  const [planes, setPlanes] = useState([])
+  const [planSel, setPlanSel] = useState('')
   const [sinopticosExistentes, setSinopticosExistentes] = useState([])
   const [jornadas, setJornadas] = useState([])
 
@@ -65,6 +67,7 @@ export default function SinopticoPage() {
     bloque_horario_id: '',
     seccion: '',
     id_seccion: '',
+    capacidad_inicial: '',
   })
   const [bloqueFijo, setBloqueFijo] = useState(false)
 
@@ -100,6 +103,10 @@ export default function SinopticoPage() {
     api.get('/jornadas')
       .then(res => setJornadas(res.data))
       .catch(err => console.error('Error jornadas:', err))
+
+    api.get('/planes-estudio')
+      .then(res => setPlanes(res.data))
+      .catch(err => console.error('Error planes:', err))
   }, [])
 
   // Si se llega desde la galería con ?id=X, abre ese sinóptico directamente
@@ -190,6 +197,7 @@ export default function SinopticoPage() {
       bloque_horario_id: clase.extendedProps?.bloque_horario_id ?? '',
       seccion: clase.extendedProps?.seccion ?? '',
       id_seccion: clase.extendedProps?.id_seccion ?? '',
+      capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
     })
   }
 
@@ -209,6 +217,7 @@ export default function SinopticoPage() {
         bloque_horario_id: parseInt(itemEditando.bloque_horario_id),
         seccion: itemEditando.seccion || null,
         id_seccion: itemEditando.id_seccion || null,
+        capacidad_inicial: itemEditando.capacidad_inicial !== '' ? parseInt(itemEditando.capacidad_inicial) : null,
       })
       setMensaje('Bloque actualizado correctamente.')
       cerrarEditorBloque()
@@ -231,6 +240,7 @@ export default function SinopticoPage() {
       bloque_horario_id: '',
       seccion: '',
       id_seccion: '',
+      capacidad_inicial: '',
     })
     setBloqueFijo(false)
     setAgregandoNuevo(true)
@@ -263,6 +273,7 @@ export default function SinopticoPage() {
       bloque_horario_id: String(bloque.id),
       seccion: '',
       id_seccion: '',
+      capacidad_inicial: '',
     })
     setBloqueFijo(true)
     setAgregandoNuevo(true)
@@ -283,6 +294,7 @@ export default function SinopticoPage() {
         bloque_horario_id: parseInt(nuevoItem.bloque_horario_id),
         seccion: nuevoItem.seccion || null,
         id_seccion: nuevoItem.id_seccion || null,
+        capacidad_inicial: nuevoItem.capacidad_inicial !== '' ? parseInt(nuevoItem.capacidad_inicial) : null,
       })
       setMensaje('Ramo agregado correctamente.')
       cerrarFormularioNuevo()
@@ -386,11 +398,28 @@ export default function SinopticoPage() {
             </h2>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Carrera / Escuela</label>
-              <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={carreraSel} onChange={e => setCarreraSel(e.target.value)}>
-                <option value="">-- Seleccionar Carrera --</option>
-                {carreras.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.codigo})</option>)}
-              </select>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Plan de estudio</label>
+                <select
+                  className="duoc-select"
+                  style={{ padding: '6px 8px', fontSize: '12px' }}
+                  value={planSel}
+                  onChange={e => {
+                    setPlanSel(e.target.value)
+                    const p = planes.find(x => String(x.id) === e.target.value)
+                    setCarreraSel(p ? String(p.carrera_id) : '')
+                  }}
+                >
+                  <option value="">-- Seleccionar Carrera --</option>
+                  {planes.map(p => {
+                    const c = carreras.find(x => x.id === p.carrera_id)
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre.replace(/^Plan\s+/, '')}{c ? ` (${c.codigo})` : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
@@ -705,6 +734,18 @@ export default function SinopticoPage() {
               </select>
             </div>
 
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
+              <input
+                type="number"
+                min="0"
+                className="duoc-input"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.capacidad_inicial}
+                onChange={e => setItemEditando({ ...itemEditando, capacidad_inicial: e.target.value })}
+              />
+            </div>
+
             <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
               <select
@@ -828,6 +869,19 @@ export default function SinopticoPage() {
                   <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
                 ))}
               </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
+              <input
+                type="number"
+                min="0"
+                className="duoc-input"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                placeholder="Ej: 30"
+                value={nuevoItem.capacidad_inicial}
+                onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
+              />
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '16px' }}>

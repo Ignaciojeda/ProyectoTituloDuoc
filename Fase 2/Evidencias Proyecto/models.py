@@ -175,7 +175,7 @@ class SinopticoItem(Base):
     id_seccion = Column(String(30), nullable=True)
     seccion = Column(String(50), nullable=True)
 
-    capacidad_inicial = Column(SmallInteger, nullable=True)
+    capacidad_inicial = Column(Integer, nullable=True)
     fecha_inicio = Column(Date, nullable=True)
     fecha_final = Column(Date, nullable=True)
 
