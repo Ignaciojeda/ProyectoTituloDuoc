@@ -45,8 +45,8 @@ export default function CoordinadorPage() {
               Verifique la disponibilidad de profesores por área técnica y la capacidad de las salas por edificio.
             </p>
           </div>
-          <Link to="/sinoptico" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Consultar recursos
+          <Link to="/salas/galeria" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
+            Ver horarios de salas
           </Link>
         </div>
       </div>

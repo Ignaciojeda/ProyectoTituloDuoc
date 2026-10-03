@@ -401,6 +401,52 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
     return eventos
 
 
+@app.get("/api/salas/{sala_id}/eventos")
+def eventos_sala(sala_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+    sala = db.query(models.Sala).filter(models.Sala.id == sala_id).first()
+    if not sala:
+        raise HTTPException(status_code=404, detail="La sala indicada no existe.")
+
+    # A diferencia de eventos_sinoptico, aquí se busca en TODOS los sinópticos
+    # a la vez: una sala se comparte entre carreras, así que su horario
+    # ocupado depende de todo lo que exista en el sistema, no de uno solo.
+    filas = (
+        db.query(
+            models.SinopticoItem, models.Asignatura, models.Profesor,
+            models.BloqueHorario, models.Jornada, models.Sinoptico,
+            models.Carrera, models.Semestre,
+        )
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .outerjoin(models.Jornada, models.SinopticoItem.jornada_id == models.Jornada.id)
+        .join(models.Sinoptico, models.SinopticoItem.sinoptico_id == models.Sinoptico.id)
+        .join(models.Carrera, models.Sinoptico.carrera_id == models.Carrera.id)
+        .join(models.Semestre, models.Sinoptico.semestre_id == models.Semestre.id)
+        .filter(models.SinopticoItem.sala_id == sala_id)
+        .all()
+    )
+
+    eventos = []
+    for item, asignatura, profesor, bloque, jornada, sinoptico, carrera, semestre in filas:
+        eventos.append({
+            "id": item.id,
+            "title": asignatura.nombre,
+            "daysOfWeek": [bloque.dia_semana],
+            "startTime": bloque.hora_inicio.strftime("%H:%M:%S"),
+            "endTime": bloque.hora_fin.strftime("%H:%M:%S"),
+            "extendedProps": {
+                "codigo": asignatura.codigo,
+                "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else "Sin asignar",
+                "jornada": jornada.nombre if jornada else bloque.jornada.value,
+                "carrera": carrera.nombre,
+                "semestre": f"{semestre.anio}-{semestre.numero}",
+                "sinoptico_id": sinoptico.id,
+            }
+        })
+    return eventos
+
+
 @app.post("/api/sinopticos/items", response_model=schemas.SinopticoItemOut, status_code=201)
 def agregar_item_sinoptico(
     datos: schemas.SinopticoItemCreate,

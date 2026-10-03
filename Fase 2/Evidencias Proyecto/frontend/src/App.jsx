@@ -6,6 +6,8 @@ import CoordinadorPage from './pages/CoordinadorPage'
 import DocentePage from './pages/DocentePage'
 import SinopticoPage from './pages/SinopticoPage'
 import SinopticosGaleria from './pages/SinopticosGaleria'
+import SalasGaleria from './pages/SalasGaleria'
+import SalaHorarioPage from './pages/SalaHorarioPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
 export default function App() {
@@ -40,6 +42,16 @@ export default function App() {
         } />
         <Route path="/sinopticos/galeria" element={
           <ProtectedRoute rolesPermitidos={['coordinador', 'administrador']}><SinopticosGaleria /></ProtectedRoute>
+        } />
+
+        {/* Las salas son consultables por los 3 roles (coincide con
+            require_docente en main.py, el permiso más amplio del backend
+            para estos endpoints de solo lectura). */}
+        <Route path="/salas/galeria" element={
+          <ProtectedRoute rolesPermitidos={['coordinador', 'administrador', 'docente']}><SalasGaleria /></ProtectedRoute>
+        } />
+        <Route path="/salas/horario" element={
+          <ProtectedRoute rolesPermitidos={['coordinador', 'administrador', 'docente']}><SalaHorarioPage /></ProtectedRoute>
         } />
 
         <Route path="*" element={<Navigate to="/login" replace />} />

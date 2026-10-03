@@ -103,14 +103,14 @@ export default function AdminPage() {
         <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <div>
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
-              📚 Módulos y Oferta Académica
+              Horario de salas
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
-              Revisar catálogo de asignaturas, infraestructura de salas por edificio y asignaciones de bloques por jornada.
+              Revisar catálogo horario de las salas por edificio y asignaciones de bloques por jornada.
             </p>
           </div>
-          <Link to="/sinoptico" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
-            Ver datos maestros
+          <Link to="/salas/galeria" className="duoc-btn-accent" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
+            Ver horarios de salas
           </Link>
         </div>
       </div>
