@@ -44,6 +44,8 @@ export default function SinopticoPage() {
   // Listas para llenar los combos del panel de edición
   const [asignaturas, setAsignaturas] = useState([])
   const [profesores, setProfesores] = useState([])
+  const [profesoresDisponibles, setProfesoresDisponibles] = useState([])
+  const [cargandoProfesores, setCargandoProfesores] = useState(false)
   const [salas, setSalas] = useState([])
   const [bloquesHorario, setBloquesHorario] = useState([])
 
@@ -72,44 +74,51 @@ export default function SinopticoPage() {
   const [bloqueFijo, setBloqueFijo] = useState(false)
 
   useEffect(() => {
-    api.get('/carreras')
-      .then(res => setCarreras(res.data))
-      .catch(err => console.error('Error carreras:', err))
-
-    api.get('/semestres')
-      .then(res => setSemestres(res.data))
-      .catch(err => console.error('Error semestres:', err))
-
-    api.get('/sinopticos')
-      .then(res => setSinopticosExistentes(res.data))
-      .catch(err => console.error('Error sinopticos:', err))
-
-    api.get('/asignaturas')
-      .then(res => setAsignaturas(res.data))
-      .catch(err => console.error('Error asignaturas:', err))
-
-    api.get('/profesores')
-      .then(res => setProfesores(res.data))
-      .catch(err => console.error('Error profesores:', err))
-
-    api.get('/salas')
-      .then(res => setSalas(res.data))
-      .catch(err => console.error('Error salas:', err))
-
-    api.get('/bloques-horario')
-      .then(res => setBloquesHorario(res.data))
-      .catch(err => console.error('Error bloques horario:', err))
-
-    api.get('/jornadas')
-      .then(res => setJornadas(res.data))
-      .catch(err => console.error('Error jornadas:', err))
-
-    api.get('/planes-estudio')
-      .then(res => setPlanes(res.data))
-      .catch(err => console.error('Error planes:', err))
+    api.get('/carreras').then(res => setCarreras(res.data)).catch(err => console.error('Error carreras:', err))
+    api.get('/semestres').then(res => setSemestres(res.data)).catch(err => console.error('Error semestres:', err))
+    api.get('/sinopticos').then(res => setSinopticosExistentes(res.data)).catch(err => console.error('Error sinopticos:', err))
+    api.get('/asignaturas').then(res => setAsignaturas(res.data)).catch(err => console.error('Error asignaturas:', err))
+    api.get('/profesores').then(res => {
+      setProfesores(res.data)
+      setProfesoresDisponibles(res.data)
+    }).catch(err => console.error('Error profesores:', err))
+    api.get('/salas').then(res => setSalas(res.data)).catch(err => console.error('Error salas:', err))
+    api.get('/bloques-horario').then(res => setBloquesHorario(res.data)).catch(err => console.error('Error bloques horario:', err))
+    api.get('/jornadas').then(res => setJornadas(res.data)).catch(err => console.error('Error jornadas:', err))
+    api.get('/planes-estudio').then(res => setPlanes(res.data)).catch(err => console.error('Error planes:', err))
   }, [])
 
-  // Si se llega desde la galería con ?id=X, abre ese sinóptico directamente
+  // Cargar profesores por disponibilidad cuando cambia el bloque seleccionado en "Agregar"
+  useEffect(() => {
+    if (agregandoNuevo && nuevoItem.bloque_horario_id) {
+      cargarProfesoresPorDisponibilidad(nuevoItem.bloque_horario_id)
+    }
+  }, [agregandoNuevo, nuevoItem.bloque_horario_id])
+
+  // Cargar profesores por disponibilidad cuando cambia el bloque seleccionado en "Editar"
+  useEffect(() => {
+    if (itemEditando && itemEditando.bloque_horario_id) {
+      cargarProfesoresPorDisponibilidad(itemEditando.bloque_horario_id)
+    }
+  }, [itemEditando?.bloque_horario_id])
+
+  const cargarProfesoresPorDisponibilidad = async (bloqueHorarioId) => {
+    if (!bloqueHorarioId) {
+      setProfesoresDisponibles(profesores)
+      return
+    }
+    setCargandoProfesores(true)
+    try {
+      const { data } = await api.get(`/profesores?bloque_horario_id=${bloqueHorarioId}`)
+      setProfesoresDisponibles(data)
+    } catch (err) {
+      console.error('Error al filtrar profesores por disponibilidad:', err)
+      setProfesoresDisponibles(profesores)
+    } finally {
+      setCargandoProfesores(false)
+    }
+  }
+
   useEffect(() => {
     const idDesdeUrl = searchParams.get('id')
     if (idDesdeUrl) {
@@ -143,7 +152,6 @@ export default function SinopticoPage() {
       setSinopticoSel(data.sinoptico_id)
       cargarEventosSinoptico(data.sinoptico_id)
 
-      // Actualizar el selector de sinópticos existentes
       const res = await api.get('/sinopticos')
       setSinopticosExistentes(res.data)
     } catch (err) {
@@ -189,16 +197,20 @@ export default function SinopticoPage() {
   }
 
   const abrirEditorBloque = (clase) => {
+    const bloqueId = clase.extendedProps?.bloque_horario_id ?? ''
     setItemEditando({
       id: clase.id,
       asignatura_id: clase.extendedProps?.asignatura_id ?? '',
       profesor_id: clase.extendedProps?.profesor_id ?? '',
       sala_id: clase.extendedProps?.sala_id ?? '',
-      bloque_horario_id: clase.extendedProps?.bloque_horario_id ?? '',
+      bloque_horario_id: bloqueId,
       seccion: clase.extendedProps?.seccion ?? '',
       id_seccion: clase.extendedProps?.id_seccion ?? '',
       capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
     })
+    if (bloqueId) {
+      cargarProfesoresPorDisponibilidad(bloqueId)
+    }
   }
 
   const cerrarEditorBloque = () => setItemEditando(null)
@@ -242,6 +254,7 @@ export default function SinopticoPage() {
       id_seccion: '',
       capacidad_inicial: '',
     })
+    setProfesoresDisponibles(profesores)
     setBloqueFijo(false)
     setAgregandoNuevo(true)
   }
@@ -266,6 +279,7 @@ export default function SinopticoPage() {
       setMensaje('No existe un bloque horario para esa celda.')
       return
     }
+
     setNuevoItem({
       asignatura_id: '',
       profesor_id: '',
@@ -275,6 +289,8 @@ export default function SinopticoPage() {
       id_seccion: '',
       capacidad_inicial: '',
     })
+
+    cargarProfesoresPorDisponibilidad(bloque.id)
     setBloqueFijo(true)
     setAgregandoNuevo(true)
   }
@@ -399,27 +415,26 @@ export default function SinopticoPage() {
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>Plan de estudio</label>
-                <select
-                  className="duoc-select"
-                  style={{ padding: '6px 8px', fontSize: '12px' }}
-                  value={planSel}
-                  onChange={e => {
-                    setPlanSel(e.target.value)
-                    const p = planes.find(x => String(x.id) === e.target.value)
-                    setCarreraSel(p ? String(p.carrera_id) : '')
-                  }}
-                >
-                  <option value="">-- Seleccionar Carrera --</option>
-                  {planes.map(p => {
-                    const c = carreras.find(x => x.id === p.carrera_id)
-                    return (
-                      <option key={p.id} value={p.id}>
-                        {p.nombre.replace(/^Plan\s+/, '')}{c ? ` (${c.codigo})` : ''}
-                      </option>
-                    )
-                  })}
-                </select>
-
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={planSel}
+                onChange={e => {
+                  setPlanSel(e.target.value)
+                  const p = planes.find(x => String(x.id) === e.target.value)
+                  setCarreraSel(p ? String(p.carrera_id) : '')
+                }}
+              >
+                <option value="">-- Seleccionar Carrera --</option>
+                {planes.map(p => {
+                  const c = carreras.find(x => x.id === p.carrera_id)
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre.replace(/^Plan\s+/, '')}{c ? ` (${c.codigo})` : ''}
+                    </option>
+                  )
+                })}
+              </select>
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
@@ -624,7 +639,7 @@ export default function SinopticoPage() {
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              justifyContent: 'center',
+                              justify: 'center',
                               height: '100%',
                               color: 'var(--duoc-blue-accent)',
                               fontSize: '16px',
@@ -704,8 +719,11 @@ export default function SinopticoPage() {
               />
             </div>
 
+            {/* SELECCIÓN DE PROFESOR FILTRADO POR DISPONIBILIDAD */}
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Profesor</label>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>
+                Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
+              </label>
               <select
                 className="duoc-select"
                 style={{ padding: '6px 8px', fontSize: '12px' }}
@@ -713,7 +731,7 @@ export default function SinopticoPage() {
                 onChange={e => setItemEditando({ ...itemEditando, profesor_id: e.target.value })}
               >
                 <option value="">-- Sin asignar --</option>
-                {profesores.map(p => (
+                {profesoresDisponibles.map(p => (
                   <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
                 ))}
               </select>
@@ -841,8 +859,27 @@ export default function SinopticoPage() {
               />
             </div>
 
+            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.bloque_horario_id}
+                disabled={bloqueFijo}
+                onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {bloquesHorario.map(b => (
+                  <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* SELECCIÓN DE PROFESOR FILTRADO POR DISPONIBILIDAD */}
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Profesor</label>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>
+                Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
+              </label>
               <select
                 className="duoc-select"
                 style={{ padding: '6px 8px', fontSize: '12px' }}
@@ -850,7 +887,7 @@ export default function SinopticoPage() {
                 onChange={e => setNuevoItem({ ...nuevoItem, profesor_id: e.target.value })}
               >
                 <option value="">-- Sin asignar --</option>
-                {profesores.map(p => (
+                {profesoresDisponibles.map(p => (
                   <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
                 ))}
               </select>
@@ -882,22 +919,6 @@ export default function SinopticoPage() {
                 value={nuevoItem.capacidad_inicial}
                 onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
               />
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={nuevoItem.bloque_horario_id}
-                disabled={bloqueFijo}
-                onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
-              >
-                <option value="">-- Seleccionar --</option>
-                {bloquesHorario.map(b => (
-                  <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
-                ))}
-              </select>
             </div>
 
             <div style={{ display: 'flex', gap: '8px' }}>

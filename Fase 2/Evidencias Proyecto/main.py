@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
 import io
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Depends, HTTPException, status, Query
 from unicodedata import normalize
 import re
 import pandas as pd
@@ -218,14 +219,13 @@ def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_
 
 @app.get("/api/profesores", response_model=List[schemas.ProfesorOut])
 def listar_profesores(
-    bloque_horario_id: Optional[int] = None, 
+    bloque_horario_id: Optional[int] = Query(None), 
     db: Session = Depends(get_db), 
     _: models.Usuario = Depends(require_docente)
 ):
     """
-    Lista los profesores activos.
-    Si se proporciona `bloque_horario_id`, filtra ÚNICAMENTE los profesores que tengan
-    disponibilidad activa (disponible == True) para ese bloque horario.
+    Lista profesores activos.
+    Si recibe bloque_horario_id en los Query Parameters, filtra estrictamente.
     """
     query = db.query(models.Profesor).filter(models.Profesor.activo == True)
     
@@ -234,9 +234,9 @@ def listar_profesores(
             models.DisponibilidadDocente, 
             models.Profesor.id == models.DisponibilidadDocente.profesor_id
         ).filter(
-            models.DisponibilidadDocente.bloque_horario_id == bloque_horario_id,
-            models.DisponibilidadDocente.disponible == True
-        )
+            models.DisponibilidadDocente.bloque_horario_id == int(bloque_horario_id),
+            models.DisponibilidadDocente.disponible.is_(True)
+        ).distinct()
         
     return query.order_by(models.Profesor.nombre).all()
 
