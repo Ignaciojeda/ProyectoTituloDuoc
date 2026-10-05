@@ -80,6 +80,15 @@ def obtener_jornada_id(db, jornada):
     fila = db.query(models.Jornada).filter(func.lower(models.Jornada.nombre) == valor).first()
     return fila.id if fila else None
 
+def generar_seccion(db, sinoptico_id, asignatura, jornada):
+    valor = jornada.value if hasattr(jornada, 'value') else str(jornada)
+    letra = valor[:1].upper() # D / V / M
+    ya_hay = db.query(models.SinopticoItem).filter(
+        models.SinopticoItem.sinoptico_id == sinoptico_id,
+        models.SinopticoItem.asignatura_id == asignatura.id,
+    ).count()
+    return f"{asignatura.codigo}-{ya_hay + 1:03d}{letra}"
+
 def limpiar_texto(texto: str) -> str:
     """Elimina tildes, caracteres especiales y convierte a minúsculas para comparaciones flexibles."""
     if not texto:
@@ -459,8 +468,8 @@ def generar_sinoptico(
                         profesor_id=p.id,
                         sala_id=s.id,
                         bloque_horario_id=b.id,
-                        seccion=f"{asignatura.codigo}-001D",
-                        id_seccion="24478875",
+                        seccion=f"{asignatura.codigo}-001{jornada_val[:1].upper()}",
+                        id_seccion=None,
                         fecha_inicio=inicio,
                         fecha_final=fin,
                         jornada_id=jornada_id,
@@ -608,6 +617,15 @@ def agregar_item_sinoptico(
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
 
+    asignatura = db.query(models.Asignatura).filter(models.Asignatura.id == datos.asignatura_id).first()
+    if not asignatura:
+        raise HTTPException(status_code=404, detail="La asignatura indicada no existe.")
+
+    bloque = db.query(models.BloqueHorario).filter(models.BloqueHorario.id == datos.bloque_horario_id).first()
+    if not bloque:
+        raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
+    inicio, fin = fechas_para_bloque(bloque.dia_semana)
+
     # Validar choque de profesor SOLO si se especificó uno
     if datos.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
@@ -632,8 +650,12 @@ def agregar_item_sinoptico(
         profesor_id=datos.profesor_id,
         sala_id=datos.sala_id,
         bloque_horario_id=datos.bloque_horario_id,
-        seccion=datos.seccion,
-        id_seccion=datos.id_seccion
+        seccion=generar_seccion(db, datos.sinoptico_id, asignatura, sinoptico.jornada),
+        id_seccion=None,
+        capacidad_inicial=datos.capacidad_inicial,
+        fecha_inicio=inicio,
+        fecha_final=fin,
+        jornada_id=obtener_jornada_id(db, sinoptico.jornada),
     )
     db.add(nuevo_item)
     try:
@@ -681,17 +703,23 @@ def editar_item_sinoptico(
         if choque_sala:
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
+
+    if datos.asignatura_id != item.asignatura_id:
+        asignatura = db.query(models.Asignatura).filter(models.Asignatura.id == datos.asignatura_id).first()
+        if not asignatura:
+            raise HTTPException(status_code=404, detail="La asignatura indicada no existe.")
+        item.seccion = generar_seccion(db, item.sinoptico_id, asignatura, sinoptico.jornada)
+
     if datos.jornada_id is not None:
         item.jornada_id = datos.jornada_id
     elif item.jornada_id is None:
-        item.jornada_id = obtener_jornada_id(db, item.sinoptico.jornada)
+        item.jornada_id = obtener_jornada_id(db, sinoptico.jornada)
 
     item.asignatura_id = datos.asignatura_id
     item.profesor_id = datos.profesor_id
     item.sala_id = datos.sala_id
     item.bloque_horario_id = datos.bloque_horario_id
-    item.id_seccion = datos.id_seccion
-    item.seccion = datos.seccion
     item.capacidad_inicial = datos.capacidad_inicial
     item.fecha_inicio, item.fecha_final = fechas_para_bloque(bloque.dia_semana)
 

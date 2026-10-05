@@ -70,7 +70,6 @@ class ProfesorOut(BaseModel):
 
 # --- Asignatura ---
 class AsignaturaCreate(BaseModel):
-    codigo: str
     nombre: str
     plan_estudio_id: Optional[int] = None
     horas: Optional[int] = None
@@ -141,8 +140,6 @@ class SinopticoItemCreate(BaseModel):
     sala_id: Optional[int] = None
     bloque_horario_id: int
     jornada_id: Optional[int] = None
-    id_seccion: Optional[str] = None
-    seccion: Optional[str] = None
     capacidad_inicial: Optional[int] = None
 
 class SinopticoItemUpdate(BaseModel):
@@ -151,8 +148,6 @@ class SinopticoItemUpdate(BaseModel):
     sala_id: Optional[int] = None
     bloque_horario_id: int
     jornada_id: Optional[int] = None
-    id_seccion: Optional[str] = None
-    seccion: Optional[str] = None
     capacidad_inicial: Optional[int] = None
 
 class SinopticoItemOut(SinopticoItemCreate):

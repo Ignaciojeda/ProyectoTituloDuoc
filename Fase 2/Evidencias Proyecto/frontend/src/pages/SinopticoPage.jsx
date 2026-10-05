@@ -67,8 +67,6 @@ export default function SinopticoPage() {
     profesor_id: '',
     sala_id: '',
     bloque_horario_id: '',
-    seccion: '',
-    id_seccion: '',
     capacidad_inicial: '',
   })
   const [bloqueFijo, setBloqueFijo] = useState(false)
@@ -138,13 +136,14 @@ export default function SinopticoPage() {
   }
 
   const handleGenerarAuto = async () => {
-    if (!carreraSel || !semestreSel) {
-      setMensaje('Debe seleccionar carrera y semestre.')
+    if (!planSel || !semestreSel) {
+      setMensaje('Debe seleccionar plan de estudio y semestre.')
       return
     }
     try {
       const { data } = await api.post('/sinopticos/generar', {
         carrera_id: parseInt(carreraSel),
+        plan_estudio_id: parseInt(planSel),
         semestre_id: parseInt(semestreSel),
         jornada: jornadaSel
       })
@@ -204,8 +203,6 @@ export default function SinopticoPage() {
       profesor_id: clase.extendedProps?.profesor_id ?? '',
       sala_id: clase.extendedProps?.sala_id ?? '',
       bloque_horario_id: bloqueId,
-      seccion: clase.extendedProps?.seccion ?? '',
-      id_seccion: clase.extendedProps?.id_seccion ?? '',
       capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
     })
     if (bloqueId) {
@@ -227,8 +224,6 @@ export default function SinopticoPage() {
         profesor_id: itemEditando.profesor_id ? parseInt(itemEditando.profesor_id) : null,
         sala_id: itemEditando.sala_id ? parseInt(itemEditando.sala_id) : null,
         bloque_horario_id: parseInt(itemEditando.bloque_horario_id),
-        seccion: itemEditando.seccion || null,
-        id_seccion: itemEditando.id_seccion || null,
         capacidad_inicial: itemEditando.capacidad_inicial !== '' ? parseInt(itemEditando.capacidad_inicial) : null,
       })
       setMensaje('Bloque actualizado correctamente.')
@@ -250,8 +245,6 @@ export default function SinopticoPage() {
       profesor_id: '',
       sala_id: '',
       bloque_horario_id: '',
-      seccion: '',
-      id_seccion: '',
       capacidad_inicial: '',
     })
     setProfesoresDisponibles(profesores)
@@ -285,8 +278,6 @@ export default function SinopticoPage() {
       profesor_id: '',
       sala_id: '',
       bloque_horario_id: String(bloque.id),
-      seccion: '',
-      id_seccion: '',
       capacidad_inicial: '',
     })
 
@@ -308,8 +299,6 @@ export default function SinopticoPage() {
         profesor_id: nuevoItem.profesor_id ? parseInt(nuevoItem.profesor_id) : null,
         sala_id: nuevoItem.sala_id ? parseInt(nuevoItem.sala_id) : null,
         bloque_horario_id: parseInt(nuevoItem.bloque_horario_id),
-        seccion: nuevoItem.seccion || null,
-        id_seccion: nuevoItem.id_seccion || null,
         capacidad_inicial: nuevoItem.capacidad_inicial !== '' ? parseInt(nuevoItem.capacidad_inicial) : null,
       })
       setMensaje('Ramo agregado correctamente.')
@@ -495,13 +484,115 @@ export default function SinopticoPage() {
                 Eliminar sinóptico completo
               </button>
 
-              <button
-                onClick={abrirFormularioNuevo}
-                className="duoc-btn-primary"
-                style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%' }}
-              >
-                Agregar ramo manualmente
-              </button>
+              {agregandoNuevo ? (
+                <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                  <h3 style={{ margin: '0 0 8px 0', fontSize: '13px', color: 'var(--duoc-navy)' }}>Agregar ramo</h3>
+
+                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
+                    <label className="duoc-label" style={{ fontSize: '11px' }}>Asignatura</label>
+                    <select
+                      className="duoc-select"
+                      style={{ padding: '6px 8px', fontSize: '12px' }}
+                      value={nuevoItem.asignatura_id}
+                      onChange={e => setNuevoItem({ ...nuevoItem, asignatura_id: e.target.value })}
+                    >
+                      <option value="">-- Seleccionar --</option>
+                      {asignaturas.map(a => (
+                        <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
+                    <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
+                    <select
+                      className="duoc-select"
+                      style={{ padding: '6px 8px', fontSize: '12px' }}
+                      value={nuevoItem.bloque_horario_id}
+                      disabled={bloqueFijo}
+                      onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
+                    >
+                      <option value="">-- Seleccionar --</option>
+                      {bloquesHorario.map(b => (
+                        <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
+                    <label className="duoc-label" style={{ fontSize: '11px' }}>
+                      Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
+                    </label>
+                    <select
+                      className="duoc-select"
+                      style={{ padding: '6px 8px', fontSize: '12px' }}
+                      value={nuevoItem.profesor_id}
+                      onChange={e => setNuevoItem({ ...nuevoItem, profesor_id: e.target.value })}
+                    >
+                      <option value="">-- Sin asignar --</option>
+                      {profesoresDisponibles.map(p => (
+                        <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
+                    <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
+                    <select
+                      className="duoc-select"
+                      style={{ padding: '6px 8px', fontSize: '12px' }}
+                      value={nuevoItem.sala_id}
+                      onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
+                    >
+                      <option value="">-- Sin asignar --</option>
+                      {salas.map(s => (
+                        <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+                    <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
+                    <input
+                      type="number"
+                      min="0"
+                      className="duoc-input"
+                      style={{ padding: '6px 8px', fontSize: '12px' }}
+                      placeholder="Ej: 30"
+                      value={nuevoItem.capacidad_inicial}
+                      onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      onClick={guardarNuevoItem}
+                      className="duoc-btn-primary"
+                      style={{ flex: 1, padding: '7px', fontSize: '12px' }}
+                    >
+                      Agregar
+                    </button>
+                    <button
+                      onClick={cerrarFormularioNuevo}
+                      style={{
+                        flex: 1, padding: '7px', fontSize: '12px',
+                        border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
+                        background: '#fff', cursor: 'pointer',
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={abrirFormularioNuevo}
+                  className="duoc-btn-primary"
+                  style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%' }}
+                >
+                  Agregar ramo manualmente
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -631,7 +722,7 @@ export default function SinopticoPage() {
                             </div>
                             <div style={{ color: '#0369a1', fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.extendedProps?.seccion || clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
-                            </div>
+                            </div> 
                           </div>
                         ) : (
                           <div
@@ -639,7 +730,7 @@ export default function SinopticoPage() {
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              justify: 'center',
+                              justifyContent: 'center',
                               height: '100%',
                               color: 'var(--duoc-blue-accent)',
                               fontSize: '16px',
@@ -802,147 +893,7 @@ export default function SinopticoPage() {
         </div>
       )}
 
-      {/* PANEL EMERGENTE DE AGREGAR NUEVO */}
-      {agregandoNuevo && (
-        <div
-          onClick={cerrarFormularioNuevo}
-          style={{
-            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="duoc-card"
-            style={{ width: '320px', padding: '18px' }}
-          >
-            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
-              Agregar ramo
-            </h3>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Asignatura</label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={nuevoItem.asignatura_id}
-                onChange={e => setNuevoItem({ ...nuevoItem, asignatura_id: e.target.value })}
-              >
-                <option value="">-- Seleccionar --</option>
-                {asignaturas.map(a => (
-                  <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Sección (Sábana)</label>
-              <input
-                type="text"
-                className="duoc-input"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                placeholder="Ej: ABA1101-001V"
-                value={nuevoItem.seccion}
-                onChange={e => setNuevoItem({ ...nuevoItem, seccion: e.target.value })}
-              />
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>ID Sección (Sábana)</label>
-              <input
-                type="text"
-                className="duoc-input"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                placeholder="Ej: 24478875"
-                value={nuevoItem.id_seccion}
-                onChange={e => setNuevoItem({ ...nuevoItem, id_seccion: e.target.value })}
-              />
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={nuevoItem.bloque_horario_id}
-                disabled={bloqueFijo}
-                onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
-              >
-                <option value="">-- Seleccionar --</option>
-                {bloquesHorario.map(b => (
-                  <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* SELECCIÓN DE PROFESOR FILTRADO POR DISPONIBILIDAD */}
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>
-                Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
-              </label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={nuevoItem.profesor_id}
-                onChange={e => setNuevoItem({ ...nuevoItem, profesor_id: e.target.value })}
-              >
-                <option value="">-- Sin asignar --</option>
-                {profesoresDisponibles.map(p => (
-                  <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={nuevoItem.sala_id}
-                onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
-              >
-                <option value="">-- Sin asignar --</option>
-                {salas.map(s => (
-                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
-              <input
-                type="number"
-                min="0"
-                className="duoc-input"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                placeholder="Ej: 30"
-                value={nuevoItem.capacidad_inicial}
-                onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={guardarNuevoItem}
-                className="duoc-btn-primary"
-                style={{ flex: 1, padding: '8px', fontSize: '12px' }}
-              >
-                Agregar
-              </button>
-              <button
-                onClick={cerrarFormularioNuevo}
-                style={{
-                  flex: 1, padding: '8px', fontSize: '12px',
-                  border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
-                  background: '#fff', cursor: 'pointer',
-                }}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      
     </div>
   )
 }

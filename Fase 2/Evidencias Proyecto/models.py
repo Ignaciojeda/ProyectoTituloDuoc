@@ -124,7 +124,7 @@ class Asignatura(Base):
     __tablename__ = "asignatura"
 
     id = Column(Integer, primary_key=True)
-    codigo = Column(String(50), unique=True, nullable=False)
+    codigo = Column(String, nullable=False)
     nombre = Column(String(200), nullable=False)
     plan_estudio_id = Column(Integer, ForeignKey("plan_estudio.id", ondelete="SET NULL"), nullable=True)
     horas = Column(SmallInteger)
