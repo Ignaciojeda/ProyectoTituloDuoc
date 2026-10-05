@@ -204,3 +204,14 @@ class Usuario(Base):
     rol = Column(Enum(RolUsuario), nullable=False, default=RolUsuario.coordinador)
     activo = Column(Boolean, nullable=False, default=True)
     creado_en = Column(DateTime, server_default=func.now())
+
+class DisponibilidadDocente(Base):
+    __tablename__ = "disponibilidad_docente"
+
+    id = Column(Integer, primary_key=True)
+    profesor_id = Column(Integer, ForeignKey("profesor.id", ondelete="CASCADE"), nullable=False)
+    bloque_horario_id = Column(Integer, ForeignKey("bloque_horario.id", ondelete="CASCADE"), nullable=False)
+    disponible = Column(Boolean, nullable=False, default=True)  # True = 1, False = 0
+
+    profesor = relationship("Profesor")
+    bloque_horario = relationship("BloqueHorario")

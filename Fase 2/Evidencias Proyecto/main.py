@@ -1,5 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request
+import io
+from datetime import time, datetime
 from fastapi.middleware.cors import CORSMiddleware
+from unicodedata import normalize
+import re
+from fastapi import UploadFile, File
+import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
@@ -198,6 +204,116 @@ def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_
 def listar_profesores(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.Profesor).filter(models.Profesor.activo == True).order_by(models.Profesor.nombre).all()
 
+def limpiar_texto(texto: str) -> str:
+    """Elimina tildes, caracteres especiales y convierte a minúsculas para comparaciones flexibles."""
+    if not texto:
+        return ""
+    texto = normalize('NFD', str(texto)).encode('ascii', 'ignore').decode('utf-8')
+    return re.sub(r'[^a-zA-Z0-9\s]', '', texto).lower().strip()
+
+def formatear_hora_hhmm(val) -> str:
+    """Convierte cualquier objeto de hora, datetime o string a formato HH:MM."""
+    if isinstance(val, (time, datetime)):
+        return val.strftime("%H:%M")
+    val_str = str(val).strip()
+    match = re.search(r'(\d{1,2}):(\d{2})', val_str)
+    if match:
+        h, m = match.groups()
+        return f"{int(h):02d}:{m}"
+    return val_str[:5]
+
+@app.post("/api/profesores/disponibilidad/upload")
+async def subir_disponibilidad_docente(
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador)
+):
+    try:
+        contenido_bytes = await archivo.read()
+        buffer = io.BytesIO(contenido_bytes)
+        df = pd.read_excel(buffer)
+
+        df['nombre_docente'] = df['nombre_docente'].ffill()
+
+        dias_map = {
+            'lunes': 1, 'martes': 2, 'miercoles': 3, 
+            'jueves': 4, 'viernes': 5, 'sabado': 6
+        }
+
+        profesores_bd = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
+        bloques_bd = db.query(models.BloqueHorario).all()
+
+        print(f"DEBUG: Profesores en BD ({len(profesores_bd)}): {[p.nombre + ' ' + p.apellido for p in profesores_bd]}")
+        print(f"DEBUG: Bloques en BD ({len(bloques_bd)}): Muestra horas -> {[b.hora_inicio for b in bloques_bd[:5]]}")
+
+        db.query(models.DisponibilidadDocente).delete()
+        db.commit()
+
+        registros_creados = 0
+
+        for _, row in df.iterrows():
+            nombre_doc_raw = str(row['nombre_docente']).strip() if pd.notnull(row['nombre_docente']) else None
+            if not nombre_doc_raw or nombre_doc_raw.lower() == 'nan':
+                continue
+
+            nombre_doc_clean = limpiar_texto(nombre_doc_raw)
+
+            # Match de Profesor por primer nombre y primer apellido
+            prof = None
+            for p in profesores_bd:
+                nombre_bd_clean = limpiar_texto(f"{p.nombre} {p.apellido}")
+                # Buscar si coinciden las palabras clave principales
+                palabras_doc = set(nombre_doc_clean.split())
+                palabras_bd = set(nombre_bd_clean.split())
+                
+                # Si comparten al menos 2 palabras (ej: 'german' y 'barrientos')
+                if len(palabras_doc.intersection(palabras_bd)) >= 2:
+                    prof = p
+                    break
+
+            if not prof:
+                print(f"DEBUG ❌: No se encontró el profesor '{nombre_doc_raw}' en la BD")
+                continue
+
+            hora_excel_hhmm = formatear_hora_hhmm(row['hora_inicio'])
+
+            for col_dia, dia_num in dias_map.items():
+                if col_dia in row and pd.notnull(row[col_dia]):
+                    es_disponible = bool(int(row[col_dia]) == 1)
+
+                    if es_disponible:
+                        bloque = None
+                        for b in bloques_bd:
+                            if b.dia_semana == dia_num:
+                                b_hora_hhmm = formatear_hora_hhmm(b.hora_inicio)
+                                if b_hora_hhmm == hora_excel_hhmm:
+                                    bloque = b
+                                    break
+
+                        if bloque:
+                            nueva_disp = models.DisponibilidadDocente(
+                                profesor_id=prof.id,
+                                bloque_horario_id=bloque.id,
+                                disponible=True
+                            )
+                            db.add(nueva_disp)
+                            registros_creados += 1
+                        else:
+                            print(f"DEBUG : No se encontró bloque para día {dia_num} y hora {hora_excel_hhmm}")
+
+        db.commit()
+        return {
+            "ok": True,
+            "mensaje": f"Disponibilidad cargada exitosamente. Se registraron {registros_creados} bloques disponibles.",
+            "registros_procesados": registros_creados
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al procesar la disponibilidad: {str(e)}"
+        )
 
 @app.get("/api/salas", response_model=List[schemas.SalaOut])
 def listar_salas(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
@@ -457,13 +573,7 @@ def agregar_item_sinoptico(
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
 
-    bloque = db.query(models.BloqueHorario).filter(
-        models.BloqueHorario.id == datos.bloque_horario_id
-    ).first()
-    if not bloque:
-        raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
-    inicio, fin = fechas_para_bloque(bloque.dia_semana)
-
+    # Validar choque de profesor SOLO si se especificó uno
     if datos.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
             models.SinopticoItem.profesor_id == datos.profesor_id,
@@ -472,6 +582,7 @@ def agregar_item_sinoptico(
         if choque_profesor:
             raise HTTPException(status_code=409, detail="Ese profesor ya tiene otra clase asignada en ese bloque horario.")
 
+    # Validar choque de sala SOLO si se especificó una
     if datos.sala_id is not None:
         choque_sala = db.query(models.SinopticoItem).filter(
             models.SinopticoItem.sala_id == datos.sala_id,
@@ -480,18 +591,22 @@ def agregar_item_sinoptico(
         if choque_sala:
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
-    campos = datos.model_dump()
-    campos["jornada_id"] = campos.get('jornada_id') or obtener_jornada_id(db, sinoptico.jornada)
-    nuevo_item = models.SinopticoItem(**campos, fecha_inicio=inicio, fecha_final=fin)
+    nuevo_item = models.SinopticoItem(
+        sinoptico_id=datos.sinoptico_id,
+        asignatura_id=datos.asignatura_id,
+        profesor_id=datos.profesor_id,  # Puede ser None / Null
+        sala_id=datos.sala_id,          # Puede ser None / Null
+        bloque_horario_id=datos.bloque_horario_id,
+        seccion=datos.seccion,
+        id_seccion=datos.id_seccion
+    )
     db.add(nuevo_item)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Ese profesor o esa sala ya quedaron ocupados en ese horario. Intente de nuevo."
-        )
+        raise HTTPException(status_code=409, detail="Error de restricción al guardar el ramo.")
+    
     db.refresh(nuevo_item)
     return nuevo_item
 

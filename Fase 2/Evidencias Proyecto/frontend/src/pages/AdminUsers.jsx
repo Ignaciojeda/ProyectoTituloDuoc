@@ -6,7 +6,7 @@ import '../duoc.css'
 const ROLES = [
   { value: 'administrador', label: 'Administrador', color: '#b45309', bg: '#fef3c7' },
   { value: 'coordinador',   label: 'Coordinador',   color: '#1e40af', bg: '#dbeafe' },
-  { value: 'docente',       label: 'Docente',         color: '#065f46', bg: '#d1fae5' },
+  { value: 'docente',       label: 'Docente',       color: '#065f46', bg: '#d1fae5' },
 ]
 
 const ESTADO = {
@@ -15,20 +15,24 @@ const ESTADO = {
 }
 
 export default function AdminUsers() {
-  const [users, setUsers]         = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState(null)
+  const [users, setUsers]                 = useState([])
+  const [loading, setLoading]             = useState(true)
+  const [error, setError]                 = useState(null)
   const [currentUserId, setCurrentUserId] = useState(null)
+
+  // Estado para la subida de disponibilidad docente
+  const [uploadingDisp, setUploadingDisp] = useState(false)
+  const [dispMsg, setDispMsg]             = useState(null) // { type: 'success' | 'error', text }
 
   // Modal crear
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm]           = useState({ nombre: '', email: '', password: '', rol: 'docente' })
   const [formErrors, setFormErrors] = useState({})
   const [creating, setCreating]   = useState(false)
-  const [createMsg, setCreateMsg] = useState(null) // { type: 'success'|'error', text }
+  const [createMsg, setCreateMsg] = useState(null)
 
   // Modal confirmar eliminar
-  const [delTarget, setDelTarget] = useState(null) // { id, nombre }
+  const [delTarget, setDelTarget] = useState(null)
 
   useEffect(() => {
     const stored = localStorage.getItem('user')
@@ -49,6 +53,36 @@ export default function AdminUsers() {
       setError('No se pudieron cargar los usuarios. Verifique su conexión.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ── Subir disponibilidad docente (Excel) ──────────────────────────────────
+  const handleUploadDisponibilidad = async (event) => {
+    const file = event.target.files[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('archivo', file)
+
+    setUploadingDisp(true)
+    setDispMsg(null)
+
+    try {
+      const res = await api.post('/profesores/disponibilidad/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setDispMsg({
+        type: 'success',
+        text: `✅ ${res.data.mensaje || 'Disponibilidad cargada correctamente.'} (${res.data.registros_procesados || 0} registros procesados)`,
+      })
+    } catch (err) {
+      setDispMsg({
+        type: 'error',
+        text: `❌ ${err.response?.data?.detail || 'Error al procesar la planilla de disponibilidad.'}`,
+      })
+    } finally {
+      setUploadingDisp(false)
+      event.target.value = '' // Limpiar selección del input file
     }
   }
 
@@ -111,14 +145,13 @@ export default function AdminUsers() {
     }
   }
 
-// Normalizar el rol a string en minúsculas independientemente de si viene como Enum o String
-const rolInfo = (v) => {
-  const val = typeof v === 'object' && v !== null ? v.value : String(v)
-  const normalized = val ? val.toLowerCase() : 'docente'
-  return ROLES.find(r => r.value === normalized) || ROLES[2]
-}
+  const rolInfo = (v) => {
+    const val = typeof v === 'object' && v !== null ? v.value : String(v)
+    const normalized = val ? val.toLowerCase() : 'docente'
+    return ROLES.find(r => r.value === normalized) || ROLES[2]
+  }
 
-const estInfo = (v) => ESTADO[String(v)] || ESTADO['false']
+  const estInfo = (v) => ESTADO[String(v)] || ESTADO['false']
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-main, #f4f5f7)' }}>
@@ -126,15 +159,54 @@ const estInfo = (v) => ESTADO[String(v)] || ESTADO['false']
 
       <div style={{ padding: '28px 32px 12px' }}>
         <h2 style={{ margin: '0 0 4px', color: 'var(--duoc-navy)', fontSize: '24px', fontWeight: '800' }}>
-          Gestión de Usuarios
+          Gestión de Usuarios y Disponibilidad Docente
         </h2>
         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '14px' }}>
-          Cree, visualice y gestione cuentas de usuario del sistema.
+          Cree, visualice y gestione cuentas de usuario, y cargue las planillas de disponibilidad horaria para docentes.
         </p>
       </div>
 
-      {/* ── Acciones ─────────────────────────────────────────────────────── */}
-      <div style={{ padding: '8px 32px 16px', display: 'flex', justifyContent: 'flex-end' }}>
+      {/* ── Sección: Cargar Disponibilidad y Crear Usuario ────────────────── */}
+      <div style={{ padding: '8px 32px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        
+        {/* Botón Cargar Disponibilidad Excel */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <label
+            className="duoc-btn-accent"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: uploadingDisp ? 'not-allowed' : 'pointer',
+              opacity: uploadingDisp ? 0.7 : 1,
+              margin: 0,
+            }}
+          >
+            {uploadingDisp ? '⏳ Procesando Excel...' : '📊 Cargar Disponibilidad Docente (.xlsx)'}
+            <input
+              type="file"
+              accept=".xlsx, .xls"
+              onChange={handleUploadDisponibilidad}
+              disabled={uploadingDisp}
+              style={{ display: 'none' }}
+            />
+          </label>
+
+          {dispMsg && (
+            <span style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: dispMsg.type === 'error' ? '#b91c1c' : '#065f46',
+              background: dispMsg.type === 'error' ? '#fee2e2' : '#d1fae5',
+              padding: '4px 10px',
+              borderRadius: 6,
+            }}>
+              {dispMsg.text}
+            </span>
+          )}
+        </div>
+
+        {/* Botón Crear Usuario */}
         <button
           className="duoc-btn-primary"
           onClick={() => { setShowCreate(true); setFormErrors({}); setCreateMsg(null) }}
@@ -143,7 +215,7 @@ const estInfo = (v) => ESTADO[String(v)] || ESTADO['false']
         </button>
       </div>
 
-      {/* ── Tabla ─────────────────────────────────────────────────────────── */}
+      {/* ── Tabla de Usuarios ─────────────────────────────────────────────── */}
       <div style={{ padding: '0 32px 32px' }}>
         <div className="duoc-card" style={{ padding: 0, overflowX: 'auto' }}>
 
