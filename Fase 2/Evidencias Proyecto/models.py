@@ -149,10 +149,13 @@ class Sinoptico(Base):
     __tablename__ = "sinoptico"
 
     id = Column(Integer, primary_key=True)
-    carrera_id = Column(Integer, ForeignKey("carrera.id"), nullable=False)
-    semestre_id = Column(Integer, ForeignKey("semestre.id"), nullable=False)
-    jornada = Column(Enum(JornadaTipo), nullable=False, default=JornadaTipo.diurno) # <--- Asegurar este campo
+    carrera_id = Column(Integer, ForeignKey("carrera.id", ondelete="CASCADE"), nullable=False)
+    semestre_id = Column(Integer, ForeignKey("semestre.id", ondelete="CASCADE"), nullable=False)
+    jornada = Column(Enum(JornadaTipo), nullable=False, default=JornadaTipo.diurno)
     creado_en = Column(DateTime, server_default=func.now())
+
+    carrera = relationship("Carrera")
+    semestre = relationship("Semestre")
 
 
 class SinopticoItem(Base):
@@ -171,7 +174,6 @@ class SinopticoItem(Base):
     bloque_horario_id = Column(Integer, ForeignKey("bloque_horario.id"), nullable=False)
     jornada_id = Column(Integer, ForeignKey("jornada.id", ondelete="SET NULL"), nullable=True)
 
-    # Reemplazo oficial: ID Seccion (ej: '24478875') y Seccion (ej: 'ABA1101-001V')
     id_seccion = Column(String(30), nullable=True)
     seccion = Column(String(50), nullable=True)
 
@@ -179,6 +181,7 @@ class SinopticoItem(Base):
     fecha_inicio = Column(Date, nullable=True)
     fecha_final = Column(Date, nullable=True)
 
+    sinoptico = relationship("Sinoptico")
     jornada = relationship("Jornada")
 
 
@@ -205,13 +208,14 @@ class Usuario(Base):
     activo = Column(Boolean, nullable=False, default=True)
     creado_en = Column(DateTime, server_default=func.now())
 
+
 class DisponibilidadDocente(Base):
     __tablename__ = "disponibilidad_docente"
 
     id = Column(Integer, primary_key=True)
     profesor_id = Column(Integer, ForeignKey("profesor.id", ondelete="CASCADE"), nullable=False)
     bloque_horario_id = Column(Integer, ForeignKey("bloque_horario.id", ondelete="CASCADE"), nullable=False)
-    disponible = Column(Boolean, nullable=False, default=True)  # True = 1, False = 0
+    disponible = Column(Boolean, nullable=False, default=True)
 
     profesor = relationship("Profesor")
     bloque_horario = relationship("BloqueHorario")

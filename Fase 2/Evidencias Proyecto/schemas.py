@@ -1,7 +1,7 @@
 from datetime import date, time, datetime
 from pydantic import BaseModel, EmailStr, Field
 from models import JornadaTipo, AreaDocenteTipo, RolUsuario, EdificioTipo
-from typing import Optional
+from typing import Optional, List
 
 
 # --- Jornada ---
@@ -111,7 +111,18 @@ class BloqueHorarioOut(BaseModel):
 class GenerarSinopticoRequest(BaseModel):
     carrera_id: int
     semestre_id: int
+    jornada: JornadaTipo = JornadaTipo.diurno
+
+
+class SinopticoOut(BaseModel):
+    id: int
+    carrera_id: int
+    semestre_id: int
     jornada: JornadaTipo
+    creado_en: datetime
+
+    class Config:
+        from_attributes = True
 
 
 # --- Mover ítem ---
