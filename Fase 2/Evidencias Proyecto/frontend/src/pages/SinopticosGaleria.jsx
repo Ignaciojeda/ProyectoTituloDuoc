@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/axios'
+import { colorValido } from '../utils/color'
 import '../duoc.css'
 
 const MODULOS_DUOC = [
@@ -139,7 +140,7 @@ export default function SinopticosGaleria() {
                                   title={clase ? clase.title : ''}
                                   style={{
                                     width: '16px', height: '8px',
-                                    backgroundColor: clase ? 'var(--duoc-blue-accent, #2563eb)' : '#eef1f5',
+                                    backgroundColor: clase ? colorValido(clase.extendedProps?.color) : '#eef1f5',
                                     border: '1px solid #fff',
                                   }}
                                 />

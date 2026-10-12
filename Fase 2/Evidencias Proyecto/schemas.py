@@ -1,5 +1,6 @@
+import re
 from datetime import date, time, datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from models import JornadaTipo, AreaDocenteTipo, RolUsuario, EdificioTipo
 from typing import Optional, List
 
@@ -132,6 +133,19 @@ class MoverItemRequest(BaseModel):
     jornada: JornadaTipo
 
 
+# --- Color (hexadecimal) ---
+COLOR_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+def _normalizar_color(valor):
+    """None o '' = sin color elegido (el backend usa el color por defecto).
+    Si viene un valor, debe ser un hexadecimal #RRGGBB; se guarda en minúsculas."""
+    if valor is None or valor == "":
+        return None
+    if not COLOR_HEX_RE.fullmatch(valor):
+        raise ValueError("El color debe ser un código hexadecimal con formato #RRGGBB (ej. #2563eb).")
+    return valor.lower()
+
+
 # --- Sinóptico Item ---
 class SinopticoItemCreate(BaseModel):
     sinoptico_id: int
@@ -141,6 +155,12 @@ class SinopticoItemCreate(BaseModel):
     bloque_horario_id: int
     jornada_id: Optional[int] = None
     capacidad_inicial: Optional[int] = None
+    color: Optional[str] = None
+
+    @field_validator("color")
+    @classmethod
+    def validar_color(cls, v):
+        return _normalizar_color(v)
 
 class SinopticoItemUpdate(BaseModel):
     asignatura_id: int
@@ -149,6 +169,12 @@ class SinopticoItemUpdate(BaseModel):
     bloque_horario_id: int
     jornada_id: Optional[int] = None
     capacidad_inicial: Optional[int] = None
+    color: Optional[str] = None
+
+    @field_validator("color")
+    @classmethod
+    def validar_color(cls, v):
+        return _normalizar_color(v)
 
 class SinopticoItemOut(SinopticoItemCreate):
     id: int

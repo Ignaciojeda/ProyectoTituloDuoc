@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/axios'
+import { colorValido, colorTextoSobre } from '../utils/color'
 import '../duoc.css'
 
 const MODULOS_DUOC = [
@@ -135,19 +136,21 @@ export default function SalaHorarioPage() {
                       </td>
                       {DIAS_SEMANA.map(d => {
                         const clase = obtenerClaseParaModulo(d.key, m.label)
+                        const colorBloque = colorValido(clase?.extendedProps?.color)
+                        const colorTexto = colorTextoSobre(colorBloque)
                         return (
                           <td key={d.key} style={{ border: '1px solid var(--border-color)', padding: '3px', verticalAlign: 'top' }}>
                             {clase ? (
                               <div style={{
-                                backgroundColor: '#fef3c7',
-                                borderLeft: '3px solid #b45309',
+                                backgroundColor: colorBloque,
+                                border: '1px solid rgba(0,0,0,0.18)',
                                 padding: '2px 4px',
                                 borderRadius: '2px',
                                 lineHeight: '1.2',
                               }}>
-                                <div style={{ fontWeight: 'bold', fontSize: '10px' }}>{clase.title}</div>
-                                <div style={{ fontSize: '9px', color: '#555' }}>{clase.extendedProps?.profesor}</div>
-                                <div style={{ fontSize: '9px', color: '#555' }}>
+                                <div style={{ fontWeight: 'bold', fontSize: '10px', color: colorTexto }}>{clase.title}</div>
+                                <div style={{ fontSize: '9px', color: colorTexto, opacity: 0.9 }}>{clase.extendedProps?.profesor}</div>
+                                <div style={{ fontSize: '9px', color: colorTexto, opacity: 0.9 }}>
                                   {clase.extendedProps?.carrera} ({clase.extendedProps?.semestre})
                                 </div>
                               </div>

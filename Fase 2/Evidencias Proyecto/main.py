@@ -70,6 +70,9 @@ def area_para_asignatura(nombre_asignatura: str):
 LUNES_INICIO_SEMESTRE = date(2026, 8, 10)
 SEMANAS_DEFAULT = 17
 
+# Color (hexadecimal) con el que nacen los bloques si nadie elige otro
+COLOR_DEFAULT = "#2563eb"
+
 def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
     inicio = LUNES_INICIO_SEMESTRE + timedelta(days=dia_semana - 1)
     fin = inicio + timedelta(weeks=semanas)
@@ -473,6 +476,7 @@ def generar_sinoptico(
                         fecha_inicio=inicio,
                         fecha_final=fin,
                         jornada_id=jornada_id,
+                        color=COLOR_DEFAULT,
                     )
                     db.add(item)
                     asignado = True
@@ -559,6 +563,7 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
                 "bloque_horario_id": item.bloque_horario_id,
                 "jornada_id": item.jornada_id,
                 "capacidad_inicial": item.capacidad_inicial,
+                "color": item.color,
             }
         })
     return eventos
@@ -602,6 +607,7 @@ def eventos_sala(sala_id: int, db: Session = Depends(get_db), _: models.Usuario 
                 "carrera": carrera.nombre,
                 "semestre": f"{semestre.anio}-{semestre.numero}",
                 "sinoptico_id": sinoptico.id,
+                "color": item.color,
             }
         })
     return eventos
@@ -656,6 +662,7 @@ def agregar_item_sinoptico(
         fecha_inicio=inicio,
         fecha_final=fin,
         jornada_id=obtener_jornada_id(db, sinoptico.jornada),
+        color=datos.color or COLOR_DEFAULT,
     )
     db.add(nuevo_item)
     try:
@@ -721,6 +728,8 @@ def editar_item_sinoptico(
     item.sala_id = datos.sala_id
     item.bloque_horario_id = datos.bloque_horario_id
     item.capacidad_inicial = datos.capacidad_inicial
+    if datos.color:
+        item.color = datos.color
     item.fecha_inicio, item.fecha_final = fechas_para_bloque(bloque.dia_semana)
 
     try:

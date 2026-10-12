@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, SmallInteger, String, Boolean,
-    Date, DateTime, Time, ForeignKey, Enum, UniqueConstraint, func
+    Date, DateTime, Time, ForeignKey, Enum, UniqueConstraint, CheckConstraint, func
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -164,6 +164,8 @@ class SinopticoItem(Base):
     __table_args__ = (
         UniqueConstraint("profesor_id", "bloque_horario_id", name="uq_item_profesor_bloque"),
         UniqueConstraint("sala_id", "bloque_horario_id", name="uq_item_sala_bloque"),
+        # El color solo puede ser un hexadecimal #RRGGBB
+        CheckConstraint("color ~ '^#[0-9a-fA-F]{6}$'", name="ck_item_color_hex"),
     )
 
     id = Column(Integer, primary_key=True)
@@ -178,6 +180,11 @@ class SinopticoItem(Base):
     seccion = Column(String(50), nullable=True)
 
     capacidad_inicial = Column(Integer, nullable=True)
+
+    # Color del bloque en el horario, en hexadecimal #RRGGBB (ej. "#2563eb").
+    # Los bloques nuevos (p. ej. al generar automáticamente) salen con el color por defecto.
+    color = Column(String(7), nullable=False, default="#2563eb", server_default="#2563eb")
+
     fecha_inicio = Column(Date, nullable=True)
     fecha_final = Column(Date, nullable=True)
 

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/axios'
+import SelectorColor from '../components/SelectorColor'
+import { COLOR_DEFAULT, colorValido, colorTextoSobre } from '../utils/color'
 import '../duoc.css'
 
 const MODULOS_DUOC = [
@@ -68,6 +70,7 @@ export default function SinopticoPage() {
     sala_id: '',
     bloque_horario_id: '',
     capacidad_inicial: '',
+    color: COLOR_DEFAULT,
   })
   const [bloqueFijo, setBloqueFijo] = useState(false)
 
@@ -204,6 +207,7 @@ export default function SinopticoPage() {
       sala_id: clase.extendedProps?.sala_id ?? '',
       bloque_horario_id: bloqueId,
       capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
+      color: colorValido(clase.extendedProps?.color),
     })
     if (bloqueId) {
       cargarProfesoresPorDisponibilidad(bloqueId)
@@ -225,6 +229,7 @@ export default function SinopticoPage() {
         sala_id: itemEditando.sala_id ? parseInt(itemEditando.sala_id) : null,
         bloque_horario_id: parseInt(itemEditando.bloque_horario_id),
         capacidad_inicial: itemEditando.capacidad_inicial !== '' ? parseInt(itemEditando.capacidad_inicial) : null,
+        color: itemEditando.color,
       })
       setMensaje('Bloque actualizado correctamente.')
       cerrarEditorBloque()
@@ -246,6 +251,7 @@ export default function SinopticoPage() {
       sala_id: '',
       bloque_horario_id: '',
       capacidad_inicial: '',
+      color: COLOR_DEFAULT,
     })
     setProfesoresDisponibles(profesores)
     setBloqueFijo(false)
@@ -279,6 +285,7 @@ export default function SinopticoPage() {
       sala_id: '',
       bloque_horario_id: String(bloque.id),
       capacidad_inicial: '',
+      color: COLOR_DEFAULT,
     })
 
     cargarProfesoresPorDisponibilidad(bloque.id)
@@ -300,6 +307,7 @@ export default function SinopticoPage() {
         sala_id: nuevoItem.sala_id ? parseInt(nuevoItem.sala_id) : null,
         bloque_horario_id: parseInt(nuevoItem.bloque_horario_id),
         capacidad_inicial: nuevoItem.capacidad_inicial !== '' ? parseInt(nuevoItem.capacidad_inicial) : null,
+        color: nuevoItem.color,
       })
       setMensaje('Ramo agregado correctamente.')
       cerrarFormularioNuevo()
@@ -564,6 +572,14 @@ export default function SinopticoPage() {
                     />
                   </div>
 
+                  <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+                    <label className="duoc-label" style={{ fontSize: '11px' }}>Color</label>
+                    <SelectorColor
+                      value={nuevoItem.color}
+                      onChange={c => setNuevoItem({ ...nuevoItem, color: c })}
+                    />
+                  </div>
+
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button
                       onClick={guardarNuevoItem}
@@ -640,6 +656,8 @@ export default function SinopticoPage() {
                   </td>
                   {DIAS_SEMANA.map(d => {
                     const clase = obtenerClaseParaModulo(d.key, m.label)
+                    const colorBloque = colorValido(clase?.extendedProps?.color)
+                    const colorTexto = colorTextoSobre(colorBloque)
                     return (
                       <td
                         key={d.key}
@@ -667,8 +685,8 @@ export default function SinopticoPage() {
                             draggable
                             onDragStart={(e) => handleDragStart(e, clase)}
                             style={{
-                              backgroundColor: 'var(--duoc-blue-light)',
-                              borderLeft: '3px solid var(--duoc-blue-accent)',
+                              backgroundColor: colorBloque,
+                              border: '1px solid rgba(0,0,0,0.18)',
                               padding: '1px 4px',
                               borderRadius: '2px',
                               cursor: 'grab',
@@ -682,9 +700,9 @@ export default function SinopticoPage() {
                                 onClick={() => abrirEditorBloque(clase)}
                                 title="Editar este bloque"
                                 style={{
-                                  border: 'none',
-                                  background: 'var(--duoc-blue-accent, #2563eb)',
-                                  color: '#fff',
+                                  border: '1px solid rgba(0,0,0,0.25)',
+                                  background: '#fff',
+                                  color: 'var(--duoc-navy)',
                                   borderRadius: '50%',
                                   width: '12px',
                                   height: '12px',
@@ -701,9 +719,9 @@ export default function SinopticoPage() {
                                 onClick={() => handleEliminarBloque(clase)}
                                 title="Eliminar este bloque"
                                 style={{
-                                  border: 'none',
-                                  background: '#b02a2a',
-                                  color: '#fff',
+                                  border: '1px solid rgba(0,0,0,0.25)',
+                                  background: '#fff',
+                                  color: '#b02a2a',
                                   borderRadius: '50%',
                                   width: '12px',
                                   height: '12px',
@@ -717,10 +735,10 @@ export default function SinopticoPage() {
                                 ×
                               </button>
                             </div>
-                            <div style={{ fontWeight: 'bold', color: 'var(--duoc-navy)', fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <div style={{ fontWeight: 'bold', color: colorTexto, fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.title}
                             </div>
-                            <div style={{ color: '#0369a1', fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <div style={{ color: colorTexto, opacity: 0.9, fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.extendedProps?.seccion || clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
                             </div> 
                           </div>
@@ -868,6 +886,14 @@ export default function SinopticoPage() {
                   <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
                 ))}
               </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Color</label>
+              <SelectorColor
+                value={itemEditando.color}
+                onChange={c => setItemEditando({ ...itemEditando, color: c })}
+              />
             </div>
 
             <div style={{ display: 'flex', gap: '8px' }}>
