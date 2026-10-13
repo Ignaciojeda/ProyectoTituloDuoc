@@ -4,6 +4,7 @@ from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, status, Query
 from unicodedata import normalize
+import random
 import re
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -69,6 +70,10 @@ def area_para_asignatura(nombre_asignatura: str):
 
 LUNES_INICIO_SEMESTRE = date(2026, 8, 10)
 SEMANAS_DEFAULT = 17
+DIAS_CLASES = {1, 2, 3, 4, 5}  # lunes a viernes
+VENTANA_MIN = 2
+VENTANA_MAX = 3
+MODULOS_POR_SESION = 2 # una clase = 2 módulos seguidos
 
 # Color (hexadecimal) con el que nacen los bloques si nadie elige otro
 COLOR_DEFAULT = "#2563eb"
@@ -78,6 +83,43 @@ def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
     fin = inicio + timedelta(weeks=semanas)
     return inicio, fin
 
+def sesiones_por_semana(asignatura):
+    horas = getattr(asignatura, "horas", None) or 4
+    return max(1, min(4, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
+
+def pares_consecutivos(bloques):
+    por_dia = defaultdict(list)
+    for b in sorted(bloques, key=lambda b: (b.dia_semana, b.hora_inicio)):
+        por_dia[b.dia_semana].append(b)
+    pares = []
+    for dia in sorted(por_dia):
+        lista = por_dia[dia]
+        for i in range(len(lista) - 1):
+            pares.append((lista[i], lista[i + 1]))
+    return pares
+
+def ranuras_con_ventanas(bloques):
+    """Clases de 2 módulos con 1 a 4 módulos libres entre una y otra, de lunes a viernes."""
+    por_dia = defaultdict(list)
+    for b in sorted(bloques, key=lambda b: (b.dia_semana, b.hora_inicio)):
+        if b.dia_semana in DIAS_CLASES:
+            por_dia[b.dia_semana].append(b)
+    secuencias = []
+    for lista in por_dia.values():
+        seq = []
+        i = random.randint(0, 2)
+        while i + 1 < len(lista):
+            seq.append((lista[i], lista[i + 1])) 
+            i += MODULOS_POR_SESION + random.randint(VENTANA_MIN, VENTANA_MAX)
+        secuencias.append(seq)
+    random.shuffle(secuencias)
+    ranuras = []
+    for k in range(max((len(s) for s in secuencias), default=0)):
+        for seq in secuencias:
+            if k < len(seq):
+                ranuras.append(seq[k])
+    return ranuras
+
 def obtener_jornada_id(db, jornada):
     valor = (jornada.value if hasattr(jornada, 'value') else str(jornada)).lower()
     fila = db.query(models.Jornada).filter(func.lower(models.Jornada.nombre) == valor).first()
@@ -85,12 +127,14 @@ def obtener_jornada_id(db, jornada):
 
 def generar_seccion(db, sinoptico_id, asignatura, jornada):
     valor = jornada.value if hasattr(jornada, 'value') else str(jornada)
-    letra = valor[:1].upper() # D / V / M
-    ya_hay = db.query(models.SinopticoItem).filter(
+    existente = db.query(models.SinopticoItem.seccion).filter(
         models.SinopticoItem.sinoptico_id == sinoptico_id,
         models.SinopticoItem.asignatura_id == asignatura.id,
-    ).count()
-    return f"{asignatura.codigo}-{ya_hay + 1:03d}{letra}"
+        models.SinopticoItem.seccion.isnot(None),
+    ).first()
+    if existente:
+        return existente[0]
+    return f"{asignatura.codigo}-001{valor[:1].upper()}"
 
 def limpiar_texto(texto: str) -> str:
     """Elimina tildes, caracteres especiales y convierte a minúsculas para comparaciones flexibles."""
@@ -427,45 +471,32 @@ def generar_sinoptico(
         if sala_id is not None:
             sala_ocupada[sala_id].add(bloque_id)
 
-    sin_asignar = []
+        sin_asignar = []
     profesor_carga = defaultdict(int)
     sala_carga = defaultdict(int)
-    bloque_carga = defaultdict(int)
+    carga_dia = defaultdict(int)
+    bloques_usados = set()  # bloques ya ocupados por una clase de ESTE sinóptico
 
-    # 5. Algoritmo de distribución de bloques
-    for asignatura in asignaturas:
-        area_requerida = area_para_asignatura(asignatura.nombre)
-        
-        candidatos_prof = sorted(profesores, key=lambda p: (
-            0 if (area_requerida and p.area_docente and hasattr(p.area_docente, 'value') and p.area_docente.value == area_requerida) else 1,
-            profesor_carga[p.id]
-        ))
-        candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
-        candidatos_bloques = sorted(bloques, key=lambda b: bloque_carga[b.id])
+    ranuras = ranuras_con_ventanas(bloques)
+    todas_las_sesiones = pares_consecutivos(bloques)
 
-        asignado = False
-        for b in candidatos_bloques:
-            for p in candidatos_prof:
-                # RESTRICCIÓN DE DISPONIBILIDAD: Si hay registros en la tabla de disponibilidad para este profesor, 
-                # exigir que el bloque esté explícitamente marcado como disponible.
-                if p.id in profesor_disponible_map and b.id not in profesor_disponible_map[p.id]:
+    def asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala):
+        ids = [b.id for b in sesion]
+        for p in candidatos_prof:
+            if p.id in profesor_disponible_map and any(i not in profesor_disponible_map[p.id] for i in ids):
+                continue
+            if any(i in profesor_ocupado[p.id] for i in ids):
+                continue
+            for s in candidatos_sala:
+                if any(i in sala_ocupada[s.id] for i in ids):
                     continue
-
-                if b.id in profesor_ocupado[p.id]:
-                    continue
-
-                for s in candidatos_sala:
-                    if b.id in sala_ocupada[s.id]:
-                        continue
-                    
+                for b in sesion:
                     profesor_ocupado[p.id].add(b.id)
                     sala_ocupada[s.id].add(b.id)
-                    profesor_carga[p.id] += 1
-                    sala_carga[s.id] += 1
-                    bloque_carga[b.id] += 1
+                    bloques_usados.add(b.id)
+                    carga_dia[b.dia_semana] += 1
                     inicio, fin = fechas_para_bloque(b.dia_semana)
-
-                    item = models.SinopticoItem(
+                    db.add(models.SinopticoItem(
                         sinoptico_id=nuevo_sinoptico.id,
                         asignatura_id=asignatura.id,
                         profesor_id=p.id,
@@ -477,16 +508,42 @@ def generar_sinoptico(
                         fecha_final=fin,
                         jornada_id=jornada_id,
                         color=COLOR_DEFAULT,
-                    )
-                    db.add(item)
-                    asignado = True
-                    break
-                if asignado:
-                    break
-            if asignado:
-                break
+                    ))
+                profesor_carga[p.id] += 1
+                sala_carga[s.id] += 1
+                return p, s
+        return None
 
-        if not asignado:
+    # 5. Algoritmo de distribución de clases
+    for asignatura in asignaturas:
+        area_requerida = area_para_asignatura(asignatura.nombre)
+
+        candidatos_prof = sorted(profesores, key=lambda p: (
+            0 if (area_requerida and p.area_docente and hasattr(p.area_docente, 'value') and p.area_docente.value == area_requerida) else 1,
+            profesor_carga[p.id]
+        ))
+        candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
+        dias_del_ramo = set()
+        colocadas = 0
+
+        for _ in range(sesiones_por_semana(asignatura)):
+            libres = [x for x in ranuras if not any(b.id in bloques_usados for b in x)]
+            libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)  # días distintos primero
+            respaldo = [x for x in todas_las_sesiones if not any(b.id in bloques_usados for b in x)]
+            respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
+
+            for sesion in libres + respaldo:
+                r = asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala)
+                if r:
+                    p, s = r
+                    # el mismo profesor y sala para todas las clases del ramo
+                    candidatos_prof = [p] + [x for x in candidatos_prof if x.id != p.id]
+                    candidatos_sala = [s] + [x for x in candidatos_sala if x.id != s.id]
+                    dias_del_ramo.add(sesion[0].dia_semana)
+                    colocadas += 1
+                    break
+
+        if colocadas == 0:
             sin_asignar.append(asignatura.codigo)
 
     try:
