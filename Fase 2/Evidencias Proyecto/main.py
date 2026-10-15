@@ -669,6 +669,52 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
     ]
 
 
+@app.get("/api/sinopticos/eventos")
+def eventos_todos_los_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+    """
+    Trae en UNA sola consulta los eventos de TODOS los sinópticos, agrupados
+    por sinoptico_id. Reemplaza el patrón N+1 de pedir
+    /sinopticos/{id}/eventos una vez por cada sinóptico (lento con muchos
+    sinópticos generados, como en la galería).
+    """
+    filas = (
+        db.query(models.SinopticoItem, models.Asignatura, models.Profesor, models.Sala, models.BloqueHorario, models.Jornada)
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
+        .outerjoin(models.Sala, models.SinopticoItem.sala_id == models.Sala.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .outerjoin(models.Jornada, models.SinopticoItem.jornada_id == models.Jornada.id)
+        .all()
+    )
+
+    por_sinoptico = defaultdict(list)
+    for item, asignatura, profesor, sala, bloque, jornada in filas:
+        por_sinoptico[item.sinoptico_id].append({
+            "id": item.id,
+            "title": asignatura.nombre,
+            "daysOfWeek": [bloque.dia_semana],
+            "startTime": bloque.hora_inicio.strftime("%H:%M:%S"),
+            "endTime": bloque.hora_fin.strftime("%H:%M:%S"),
+            "extendedProps": {
+                "codigo": asignatura.codigo,
+                "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else "Sin asignar",
+                "sala": sala.nombre if sala else "Sin asignar",
+                "jornada": jornada.nombre if jornada else bloque.jornada.value,
+                "id_seccion": item.id_seccion,
+                "seccion": item.seccion,
+                "asignatura_id": item.asignatura_id,
+                "profesor_id": item.profesor_id,
+                "sala_id": item.sala_id,
+                "bloque_horario_id": item.bloque_horario_id,
+                "jornada_id": item.jornada_id,
+                "capacidad_inicial": item.capacidad_inicial,
+                "color": item.color,
+            }
+        })
+
+    return {str(sinoptico_id): eventos for sinoptico_id, eventos in por_sinoptico.items()}
+
+
 @app.get("/api/sinopticos/{sinoptico_id}/eventos")
 def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
@@ -713,6 +759,53 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
             }
         })
     return eventos
+
+
+@app.get("/api/salas/eventos")
+def eventos_todas_las_salas(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+    """
+    Trae en UNA sola consulta los eventos de TODAS las salas, agrupados por
+    sala_id. Reemplaza el patrón N+1 de pedir /salas/{id}/eventos una vez por
+    cada sala (que con 15-20 salas dispara 15-20 queries secuenciales).
+    """
+    filas = (
+        db.query(
+            models.SinopticoItem, models.Asignatura, models.Profesor,
+            models.BloqueHorario, models.Jornada, models.Sinoptico,
+            models.Carrera, models.Semestre,
+        )
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .outerjoin(models.Jornada, models.SinopticoItem.jornada_id == models.Jornada.id)
+        .join(models.Sinoptico, models.SinopticoItem.sinoptico_id == models.Sinoptico.id)
+        .join(models.Carrera, models.Sinoptico.carrera_id == models.Carrera.id)
+        .join(models.Semestre, models.Sinoptico.semestre_id == models.Semestre.id)
+        .filter(models.SinopticoItem.sala_id.isnot(None))
+        .all()
+    )
+
+    por_sala = defaultdict(list)
+    for item, asignatura, profesor, bloque, jornada, sinoptico, carrera, semestre in filas:
+        por_sala[item.sala_id].append({
+            "id": item.id,
+            "title": asignatura.nombre,
+            "daysOfWeek": [bloque.dia_semana],
+            "startTime": bloque.hora_inicio.strftime("%H:%M:%S"),
+            "endTime": bloque.hora_fin.strftime("%H:%M:%S"),
+            "extendedProps": {
+                "codigo": asignatura.codigo,
+                "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else "Sin asignar",
+                "jornada": jornada.nombre if jornada else bloque.jornada.value,
+                "carrera": carrera.nombre,
+                "semestre": f"{semestre.anio}-{semestre.numero}",
+                "sinoptico_id": sinoptico.id,
+                "color": item.color,
+            }
+        })
+
+    # Claves como string para que lleguen limpias en JSON y sean fáciles de indexar en el frontend
+    return {str(sala_id): eventos for sala_id, eventos in por_sala.items()}
 
 
 @app.get("/api/salas/{sala_id}/eventos")

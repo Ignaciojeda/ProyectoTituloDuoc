@@ -38,19 +38,16 @@ export default function SalasGaleria() {
   useEffect(() => {
     const cargarTodo = async () => {
       try {
-        const { data } = await api.get('/salas')
-        setSalas(data)
-
-        const resultados = await Promise.all(
-          data.map(s =>
-            api.get(`/salas/${s.id}/eventos`)
-              .then(r => ({ id: s.id, eventos: r.data }))
-              .catch(() => ({ id: s.id, eventos: [] }))
-          )
-        )
-        const mapa = {}
-        resultados.forEach(r => { mapa[r.id] = r.eventos })
-        setEventosPorSala(mapa)
+        // Antes: 1 request a /salas + N requests (una por sala) a
+        // /salas/{id}/eventos en paralelo. Con 15-20 salas eso dispara
+        // 15-20 queries con varios JOIN cada una. Ahora: 1 request a /salas
+        // y 1 sola request batch a /salas/eventos que trae todo agrupado.
+        const [resSalas, resEventos] = await Promise.all([
+          api.get('/salas'),
+          api.get('/salas/eventos'),
+        ])
+        setSalas(resSalas.data)
+        setEventosPorSala(resEventos.data || {})
       } catch (err) {
         console.error('Error al cargar salas:', err)
       } finally {
@@ -102,7 +99,7 @@ export default function SalasGaleria() {
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', marginTop: '10px' }}>
                 {lista.map(s => {
-                  const eventos = eventosPorSala[s.id] || []
+                  const eventos = eventosPorSala[String(s.id)] || []
                   return (
                     <div key={s.id} className="duoc-card" style={{ width: '220px', padding: '10px' }}>
                       <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>

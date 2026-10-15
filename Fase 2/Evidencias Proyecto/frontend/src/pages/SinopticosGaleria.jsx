@@ -39,20 +39,16 @@ export default function SinopticosGaleria() {
   useEffect(() => {
     const cargarTodo = async () => {
       try {
-        const { data } = await api.get('/sinopticos')
-        setSinopticos(data)
-
-        // Trae las clases de cada sinóptico en paralelo, para armar la mini-previsualización
-        const resultados = await Promise.all(
-          data.map(s =>
-            api.get(`/sinopticos/${s.id}/eventos`)
-              .then(r => ({ id: s.id, eventos: r.data }))
-              .catch(() => ({ id: s.id, eventos: [] }))
-          )
-        )
-        const mapa = {}
-        resultados.forEach(r => { mapa[r.id] = r.eventos })
-        setEventosPorSinoptico(mapa)
+        // Antes: 1 request a /sinopticos + N requests (una por sinóptico) a
+        // /sinopticos/{id}/eventos en paralelo. Con muchos sinópticos eso son
+        // decenas de queries al backend. Ahora: 1 request a /sinopticos y
+        // 1 sola request batch a /sinopticos/eventos que trae todo agrupado.
+        const [resSinopticos, resEventos] = await Promise.all([
+          api.get('/sinopticos'),
+          api.get('/sinopticos/eventos'),
+        ])
+        setSinopticos(resSinopticos.data)
+        setEventosPorSinoptico(resEventos.data || {})
       } catch (err) {
         console.error('Error al cargar sinópticos:', err)
       } finally {
@@ -108,7 +104,7 @@ export default function SinopticosGaleria() {
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', marginTop: '10px' }}>
               {lista.map(s => {
-                const eventos = eventosPorSinoptico[s.id] || []
+                const eventos = eventosPorSinoptico[String(s.id)] || []
                 return (
                   <div key={s.id} className="duoc-card" style={{ width: '220px', padding: '10px' }}>
                     <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>
