@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/axios'
@@ -51,8 +51,10 @@ export default function SinopticoPage() {
   const [salas, setSalas] = useState([])
   const [bloquesHorario, setBloquesHorario] = useState([])
 
+  const [areasCarrera, setAreasCarrera] = useState([]) // áreas docentes propias de la carrera elegida, para resaltar profesores afines
   const [carreraSel, setCarreraSel] = useState('')
   const [semestreSel, setSemestreSel] = useState('')
+  const [nivelSel, setNivelSel] = useState('') // Nivel de la malla (1°, 2°, 3°...), filtra qué ramos se muestran
   const [jornadaSel, setJornadaSel] = useState('diurno')
   const [sinopticoSel, setSinopticoSel] = useState('')
 
@@ -62,7 +64,7 @@ export default function SinopticoPage() {
   // Panel de edición de una clase (null = cerrado)
   const [itemEditando, setItemEditando] = useState(null)
 
-  // Panel para agregar nuevo ramo manualmente
+  // Modal para agregar nuevo ramo manualmente
   const [agregandoNuevo, setAgregandoNuevo] = useState(false)
   const [nuevoItem, setNuevoItem] = useState({
     asignatura_id: '',
@@ -88,6 +90,57 @@ export default function SinopticoPage() {
     api.get('/jornadas').then(res => setJornadas(res.data)).catch(err => console.error('Error jornadas:', err))
     api.get('/planes-estudio').then(res => setPlanes(res.data)).catch(err => console.error('Error planes:', err))
   }, [])
+
+  // Cuando cambia la carrera seleccionada, traer qué áreas docentes le son propias
+  useEffect(() => {
+    if (!carreraSel) {
+      setAreasCarrera([])
+      return
+    }
+    api.get(`/carreras/${carreraSel}/areas-docentes`)
+      .then(res => setAreasCarrera(res.data.areas || []))
+      .catch(err => { console.error('Error areas-docentes:', err); setAreasCarrera([]) })
+  }, [carreraSel])
+
+  const profesorEsDeLaCarrera = (p) => {
+    if (!areasCarrera.length || !p.area_docente) return false
+    const area = p.area_docente.value ?? p.area_docente
+    return areasCarrera.includes(area)
+  }
+
+  const ETIQUETAS_AREA = {
+    informatica: 'Informática',
+    redes: 'Redes',
+    contabilidad: 'Contabilidad',
+    administracion: 'Administración',
+    prevencion_riesgos: 'Prevención de Riesgos',
+    trabajo_social: 'Trabajo Social',
+    diseno_grafico: 'Diseño Gráfico',
+    turismo: 'Turismo',
+    gastronomia: 'Gastronomía',
+    enfermeria: 'Enfermería',
+    matematica: 'Matemática',
+    lenguaje: 'Lenguaje',
+    ingles: 'Inglés',
+  }
+
+  const etiquetaAreaProfesor = (p) => {
+    if (!p.area_docente) return ''
+    const area = p.area_docente.value ?? p.area_docente
+    return ETIQUETAS_AREA[area] || area
+  }
+
+  // Niveles disponibles, derivados de las asignaturas cargadas (1°, 2°, 3°...)
+  const niveles = useMemo(() => {
+    return [...new Set(asignaturas.map(a => a.nivel_semestral).filter(n => n !== null && n !== undefined))]
+      .sort((a, b) => a - b)
+  }, [asignaturas])
+
+  // Asignaturas que se muestran en los selects de "agregar"/"editar", filtradas por el nivel elegido (si hay uno)
+  const asignaturasFiltradas = useMemo(() => {
+    if (!nivelSel) return asignaturas
+    return asignaturas.filter(a => String(a.nivel_semestral) === String(nivelSel))
+  }, [asignaturas, nivelSel])
 
   // Cargar profesores por disponibilidad cuando cambia el bloque seleccionado en "Agregar"
   useEffect(() => {
@@ -148,7 +201,8 @@ export default function SinopticoPage() {
         carrera_id: parseInt(carreraSel),
         plan_estudio_id: parseInt(planSel),
         semestre_id: parseInt(semestreSel),
-        jornada: jornadaSel
+        jornada: jornadaSel,
+        nivel_semestral: nivelSel ? parseInt(nivelSel) : null,
       })
       setMensaje(`Sinóptico #${data.sinoptico_id} generado correctamente.`)
       setSinopticoSel(data.sinoptico_id)
@@ -158,6 +212,31 @@ export default function SinopticoPage() {
       setSinopticosExistentes(res.data)
     } catch (err) {
       setMensaje(err.response?.data?.detail || 'Error al generar sinóptico.')
+    }
+  }
+
+  // Crea un sinóptico vacío (sin asignar ramos automáticamente) para armarlo a mano con el '+' de la grilla
+  const handleCrearVacio = async () => {
+    if (!planSel || !semestreSel) {
+      setMensaje('Debe seleccionar plan de estudio y semestre.')
+      return
+    }
+    try {
+      const { data } = await api.post('/sinopticos', {
+        carrera_id: parseInt(carreraSel),
+        plan_estudio_id: parseInt(planSel),
+        semestre_id: parseInt(semestreSel),
+        jornada: jornadaSel,
+        nivel_semestral: nivelSel ? parseInt(nivelSel) : null,
+      })
+      setMensaje(`Sinóptico #${data.sinoptico_id} creado vacío. Use el "+" de la grilla para agregar ramos.`)
+      setSinopticoSel(data.sinoptico_id)
+      cargarEventosSinoptico(data.sinoptico_id)
+
+      const res = await api.get('/sinopticos')
+      setSinopticosExistentes(res.data)
+    } catch (err) {
+      setMensaje(err.response?.data?.detail || 'Error al crear el sinóptico.')
     }
   }
 
@@ -206,6 +285,8 @@ export default function SinopticoPage() {
       profesor_id: clase.extendedProps?.profesor_id ?? '',
       sala_id: clase.extendedProps?.sala_id ?? '',
       bloque_horario_id: bloqueId,
+      seccion: clase.extendedProps?.seccion ?? '',
+      id_seccion: clase.extendedProps?.id_seccion ?? '',
       capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
       color: colorValido(clase.extendedProps?.color),
     })
@@ -231,6 +312,17 @@ export default function SinopticoPage() {
         capacidad_inicial: itemEditando.capacidad_inicial !== '' ? parseInt(itemEditando.capacidad_inicial) : null,
         color: itemEditando.color,
       })
+
+      // Propaga el color a todos los bloques de esta misma asignatura dentro
+      // de este mismo sinóptico (para que toda la asignatura luzca igual).
+      try {
+        await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${itemEditando.asignatura_id}/color`, {
+          color: itemEditando.color,
+        })
+      } catch (errColor) {
+        console.error('No se pudo propagar el color a la asignatura:', errColor)
+      }
+
       setMensaje('Bloque actualizado correctamente.')
       cerrarEditorBloque()
       if (sinopticoSel) cargarEventosSinoptico(sinopticoSel)
@@ -273,6 +365,8 @@ export default function SinopticoPage() {
     const candidatos = bloquesHorario.filter(
       b => b.dia_semana === diaKey && b.hora_inicio.slice(0, 5) === horaIni
     )
+    // Si el sinóptico es "mixto" se acepta cualquier jornada de bloque para esa celda;
+    // si no, se prioriza el bloque de la jornada seleccionada en el panel.
     const bloque = candidatos.find(b => b.jornada === jornadaSel) || candidatos[0]
     if (!bloque) {
       setMensaje('No existe un bloque horario para esa celda.')
@@ -309,6 +403,17 @@ export default function SinopticoPage() {
         capacidad_inicial: nuevoItem.capacidad_inicial !== '' ? parseInt(nuevoItem.capacidad_inicial) : null,
         color: nuevoItem.color,
       })
+
+      // Si ya existían otros bloques de esta asignatura en el sinóptico con otro
+      // color, se iguala el color de todos (incluyendo el recién creado).
+      try {
+        await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${nuevoItem.asignatura_id}/color`, {
+          color: nuevoItem.color,
+        })
+      } catch (errColor) {
+        console.error('No se pudo propagar el color a la asignatura:', errColor)
+      }
+
       setMensaje('Ramo agregado correctamente.')
       cerrarFormularioNuevo()
       cargarEventosSinoptico(sinopticoSel)
@@ -407,7 +512,7 @@ export default function SinopticoPage() {
             </div>
 
             <h2 style={{ fontSize: '15px', margin: '0 0 10px 0', color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px' }}>
-              1. Elegir carrera y semestre
+              1. Elegir carrera, semestre y nivel
             </h2>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
@@ -435,7 +540,7 @@ export default function SinopticoPage() {
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Semestre</label>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Semestre (periodo académico)</label>
               <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={semestreSel} onChange={e => setSemestreSel(e.target.value)}>
                 <option value="">-- Seleccionar Semestre --</option>
                 {semestres.map(s => <option key={s.id} value={s.id}>{s.anio}-{s.numero} Semestre</option>)}
@@ -443,15 +548,46 @@ export default function SinopticoPage() {
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Jornada</label>
-              <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={jornadaSel} onChange={e => setJornadaSel(e.target.value)}>
-                <option value="diurno">Diurno</option>
-                <option value="vespertino">Vespertino</option>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Nivel (malla curricular)</label>
+              <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={nivelSel} onChange={e => setNivelSel(e.target.value)}>
+                <option value="">-- Todos los niveles --</option>
+                {niveles.map(n => <option key={n} value={n}>{n}° nivel</option>)}
               </select>
             </div>
 
-            <button onClick={handleGenerarAuto} className="duoc-btn-primary" style={{ marginTop: '2px', padding: '7px 10px', fontSize: '12px', width: '100%' }}>
-              Generar automáticamente
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Jornada</label>
+              <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={jornadaSel} onChange={e => setJornadaSel(e.target.value)}>
+                {jornadas.length > 0 ? (
+                  jornadas.map(j => (
+                    <option key={j.id} value={j.nombre.toLowerCase()}>
+                      {j.nombre.charAt(0).toUpperCase() + j.nombre.slice(1)}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="diurno">Diurno</option>
+                    <option value="vespertino">Vespertino</option>
+                    <option value="mixta">Mixta</option>
+                  </>
+                )}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button onClick={handleGenerarAuto} className="duoc-btn-primary" style={{ marginTop: '2px', padding: '7px 10px', fontSize: '12px', flex: 1 }}>
+                Generar automáticamente
+              </button>
+            </div>
+            <button
+              onClick={handleCrearVacio}
+              style={{
+                marginTop: '6px', padding: '7px 10px', fontSize: '12px', width: '100%',
+                border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+                background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              + Crear sinóptico vacío (armar a mano)
             </button>
 
             {mensaje && (
@@ -492,123 +628,13 @@ export default function SinopticoPage() {
                 Eliminar sinóptico completo
               </button>
 
-              {agregandoNuevo ? (
-                <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
-                  <h3 style={{ margin: '0 0 8px 0', fontSize: '13px', color: 'var(--duoc-navy)' }}>Agregar ramo</h3>
-
-                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
-                    <label className="duoc-label" style={{ fontSize: '11px' }}>Asignatura</label>
-                    <select
-                      className="duoc-select"
-                      style={{ padding: '6px 8px', fontSize: '12px' }}
-                      value={nuevoItem.asignatura_id}
-                      onChange={e => setNuevoItem({ ...nuevoItem, asignatura_id: e.target.value })}
-                    >
-                      <option value="">-- Seleccionar --</option>
-                      {asignaturas.map(a => (
-                        <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
-                    <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
-                    <select
-                      className="duoc-select"
-                      style={{ padding: '6px 8px', fontSize: '12px' }}
-                      value={nuevoItem.bloque_horario_id}
-                      disabled={bloqueFijo}
-                      onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
-                    >
-                      <option value="">-- Seleccionar --</option>
-                      {bloquesHorario.map(b => (
-                        <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
-                    <label className="duoc-label" style={{ fontSize: '11px' }}>
-                      Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
-                    </label>
-                    <select
-                      className="duoc-select"
-                      style={{ padding: '6px 8px', fontSize: '12px' }}
-                      value={nuevoItem.profesor_id}
-                      onChange={e => setNuevoItem({ ...nuevoItem, profesor_id: e.target.value })}
-                    >
-                      <option value="">-- Sin asignar --</option>
-                      {profesoresDisponibles.map(p => (
-                        <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="duoc-form-group" style={{ marginBottom: '8px' }}>
-                    <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
-                    <select
-                      className="duoc-select"
-                      style={{ padding: '6px 8px', fontSize: '12px' }}
-                      value={nuevoItem.sala_id}
-                      onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
-                    >
-                      <option value="">-- Sin asignar --</option>
-                      {salas.map(s => (
-                        <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-                    <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
-                    <input
-                      type="number"
-                      min="0"
-                      className="duoc-input"
-                      style={{ padding: '6px 8px', fontSize: '12px' }}
-                      placeholder="Ej: 30"
-                      value={nuevoItem.capacidad_inicial}
-                      onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-                    <label className="duoc-label" style={{ fontSize: '11px' }}>Color</label>
-                    <SelectorColor
-                      value={nuevoItem.color}
-                      onChange={c => setNuevoItem({ ...nuevoItem, color: c })}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button
-                      onClick={guardarNuevoItem}
-                      className="duoc-btn-primary"
-                      style={{ flex: 1, padding: '7px', fontSize: '12px' }}
-                    >
-                      Agregar
-                    </button>
-                    <button
-                      onClick={cerrarFormularioNuevo}
-                      style={{
-                        flex: 1, padding: '7px', fontSize: '12px',
-                        border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
-                        background: '#fff', cursor: 'pointer',
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={abrirFormularioNuevo}
-                  className="duoc-btn-primary"
-                  style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%' }}
-                >
-                  Agregar ramo manualmente
-                </button>
-              )}
+              <button
+                onClick={abrirFormularioNuevo}
+                className="duoc-btn-primary"
+                style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%' }}
+              >
+                Agregar ramo manualmente
+              </button>
             </div>
           </div>
         ) : (
@@ -630,7 +656,10 @@ export default function SinopticoPage() {
             <h3 style={{ margin: 0, color: 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800' }}>
               BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES
             </h3>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Jornada: Diurno · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario</span>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              Jornada: {jornadaSel.charAt(0).toUpperCase() + jornadaSel.slice(1)}
+              {nivelSel ? ` · Nivel: ${nivelSel}°` : ''} · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario
+            </span>
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'sans-serif', tableLayout: 'fixed' }}>
@@ -740,7 +769,7 @@ export default function SinopticoPage() {
                             </div>
                             <div style={{ color: colorTexto, opacity: 0.9, fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.extendedProps?.seccion || clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
-                            </div> 
+                            </div>
                           </div>
                         ) : (
                           <div
@@ -798,7 +827,7 @@ export default function SinopticoPage() {
                 onChange={e => setItemEditando({ ...itemEditando, asignatura_id: e.target.value })}
               >
                 <option value="">-- Seleccionar --</option>
-                {asignaturas.map(a => (
+                {asignaturasFiltradas.map(a => (
                   <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
                 ))}
               </select>
@@ -816,22 +845,11 @@ export default function SinopticoPage() {
               />
             </div>
 
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>ID Sección (Sábana)</label>
-              <input
-                type="text"
-                className="duoc-input"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                placeholder="Ej: 24478875"
-                value={itemEditando.id_seccion}
-                onChange={e => setItemEditando({ ...itemEditando, id_seccion: e.target.value })}
-              />
-            </div>
-
             {/* SELECCIÓN DE PROFESOR FILTRADO POR DISPONIBILIDAD */}
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>
                 Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
+                {areasCarrera.length > 0 && <span style={{ color: '#16a34a', fontWeight: 600 }}> (★ = área de la carrera)</span>}
               </label>
               <select
                 className="duoc-select"
@@ -841,7 +859,13 @@ export default function SinopticoPage() {
               >
                 <option value="">-- Sin asignar --</option>
                 {profesoresDisponibles.map(p => (
-                  <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
+                  <option
+                    key={p.id}
+                    value={p.id}
+                    style={profesorEsDeLaCarrera(p) ? { color: '#16a34a', fontWeight: 700, backgroundColor: '#f0fdf4' } : undefined}
+                  >
+                    {profesorEsDeLaCarrera(p) ? '★ ' : ''}{p.nombre} {p.apellido} — {etiquetaAreaProfesor(p)}
+                  </option>
                 ))}
               </select>
             </div>
@@ -919,7 +943,137 @@ export default function SinopticoPage() {
         </div>
       )}
 
-      
+      {/* MODAL PARA AGREGAR RAMO (antes aparecía como panel al fondo del sidebar) */}
+      {agregandoNuevo && (
+        <div
+          onClick={cerrarFormularioNuevo}
+          style={{
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="duoc-card"
+            style={{ width: '320px', padding: '18px' }}
+          >
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
+              Agregar ramo
+            </h3>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Asignatura</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.asignatura_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, asignatura_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {asignaturasFiltradas.map(a => (
+                  <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.bloque_horario_id}
+                disabled={bloqueFijo}
+                onChange={e => setNuevoItem({ ...nuevoItem, bloque_horario_id: e.target.value })}
+              >
+                <option value="">-- Seleccionar --</option>
+                {bloquesHorario.map(b => (
+                  <option key={b.id} value={b.id}>{etiquetaBloque(b)}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>
+                Profesor {cargandoProfesores && <span style={{ color: 'var(--duoc-blue-accent)' }}>(buscando disponibles...)</span>}
+                {areasCarrera.length > 0 && <span style={{ color: '#16a34a', fontWeight: 600 }}> (★ = área de la carrera)</span>}
+              </label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.profesor_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, profesor_id: e.target.value })}
+              >
+                <option value="">-- Sin asignar --</option>
+                {profesoresDisponibles.map(p => (
+                  <option
+                    key={p.id}
+                    value={p.id}
+                    style={profesorEsDeLaCarrera(p) ? { color: '#16a34a', fontWeight: 700, backgroundColor: '#f0fdf4' } : undefined}
+                  >
+                    {profesorEsDeLaCarrera(p) ? '★ ' : ''}{p.nombre} {p.apellido} — {etiquetaAreaProfesor(p)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.sala_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
+              >
+                <option value="">-- Sin asignar --</option>
+                {salas.map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
+              <input
+                type="number"
+                min="0"
+                className="duoc-input"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                placeholder="Ej: 30"
+                value={nuevoItem.capacidad_inicial}
+                onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
+              />
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Color</label>
+              <SelectorColor
+                value={nuevoItem.color}
+                onChange={c => setNuevoItem({ ...nuevoItem, color: c })}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={guardarNuevoItem}
+                className="duoc-btn-primary"
+                style={{ flex: 1, padding: '8px', fontSize: '12px' }}
+              >
+                Agregar
+              </button>
+              <button
+                onClick={cerrarFormularioNuevo}
+                style={{
+                  flex: 1, padding: '8px', fontSize: '12px',
+                  border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
+                  background: '#fff', cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

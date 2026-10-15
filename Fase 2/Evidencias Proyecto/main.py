@@ -12,6 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 from typing import Optional, List
 from sqlalchemy import func
+from pydantic import BaseModel
+
+
+class ColorUpdateRequest(BaseModel):
+    color: str
 
 from database import engine, get_db, Base
 import models
@@ -28,7 +33,7 @@ from auth import (
 
 app = FastAPI(
     title="API de Sistema de Sinópticos - Duoc UC",
-    version="2.2.0",
+    version="2.3.0",
     description="Backend desacoplado para consumo desde cliente React (Sábana de Programación Oficial)"
 )
 
@@ -73,7 +78,7 @@ SEMANAS_DEFAULT = 17
 DIAS_CLASES = {1, 2, 3, 4, 5}  # lunes a viernes
 VENTANA_MIN = 2
 VENTANA_MAX = 3
-MODULOS_POR_SESION = 2 # una clase = 2 módulos seguidos
+MODULOS_POR_SESION = 2  # una clase = 2 módulos seguidos
 
 # Color (hexadecimal) con el que nacen los bloques si nadie elige otro
 COLOR_DEFAULT = "#2563eb"
@@ -109,7 +114,7 @@ def ranuras_con_ventanas(bloques):
         seq = []
         i = random.randint(0, 2)
         while i + 1 < len(lista):
-            seq.append((lista[i], lista[i + 1])) 
+            seq.append((lista[i], lista[i + 1]))
             i += MODULOS_POR_SESION + random.randint(VENTANA_MIN, VENTANA_MAX)
         secuencias.append(seq)
     random.shuffle(secuencias)
@@ -238,6 +243,34 @@ def crear_carrera(datos: schemas.CarreraCreate, db: Session = Depends(get_db), _
     return nueva
 
 
+@app.get("/api/carreras/{carrera_id}/areas-docentes")
+def areas_docentes_carrera(
+    carrera_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
+    """
+    Deduce qué áreas de docente (AreaDocenteTipo) son propias de una carrera,
+    a partir de las palabras clave de sus asignaturas (mismo criterio que usa
+    la generación automática). El frontend usa esto para resaltar, en los
+    selectores de profesor, a quienes pertenecen al área de la carrera.
+    """
+    asignaturas = db.query(models.Asignatura).join(
+        models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
+    ).filter(
+        models.PlanEstudio.carrera_id == carrera_id,
+        models.Asignatura.activo == True,
+    ).all()
+
+    areas = set()
+    for a in asignaturas:
+        area = area_para_asignatura(a.nombre)
+        if area:
+            areas.add(area)
+
+    return {"areas": sorted(areas)}
+
+
 @app.get("/api/planes-estudio", response_model=List[schemas.PlanEstudioOut])
 def listar_planes_estudio(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     return db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all()
@@ -251,12 +284,19 @@ def listar_semestres(db: Session = Depends(get_db), _: models.Usuario = Depends(
 
 
 @app.get("/api/asignaturas", response_model=List[schemas.AsignaturaOut])
-def listar_asignaturas(carrera_id: Optional[int] = None, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def listar_asignaturas(
+    carrera_id: Optional[int] = None,
+    nivel_semestral: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
     query = db.query(models.Asignatura).filter(models.Asignatura.activo == True)
     if carrera_id is not None:
         query = query.join(
             models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
         ).filter(models.PlanEstudio.carrera_id == carrera_id)
+    if nivel_semestral is not None:
+        query = query.filter(models.Asignatura.nivel_semestral == nivel_semestral)
     return query.order_by(models.Asignatura.codigo).all()
 
 
@@ -275,8 +315,8 @@ def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_
 
 @app.get("/api/profesores", response_model=List[schemas.ProfesorOut])
 def listar_profesores(
-    bloque_horario_id: Optional[int] = Query(None), 
-    db: Session = Depends(get_db), 
+    bloque_horario_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_docente)
 ):
     """
@@ -284,16 +324,16 @@ def listar_profesores(
     Si recibe bloque_horario_id en los Query Parameters, filtra estrictamente.
     """
     query = db.query(models.Profesor).filter(models.Profesor.activo == True)
-    
+
     if bloque_horario_id is not None:
         query = query.join(
-            models.DisponibilidadDocente, 
+            models.DisponibilidadDocente,
             models.Profesor.id == models.DisponibilidadDocente.profesor_id
         ).filter(
             models.DisponibilidadDocente.bloque_horario_id == int(bloque_horario_id),
             models.DisponibilidadDocente.disponible.is_(True)
         ).distinct()
-        
+
     return query.order_by(models.Profesor.nombre).all()
 
 
@@ -311,7 +351,7 @@ async def subir_disponibilidad_docente(
         df['nombre_docente'] = df['nombre_docente'].ffill()
 
         dias_map = {
-            'lunes': 1, 'martes': 2, 'miercoles': 3, 
+            'lunes': 1, 'martes': 2, 'miercoles': 3,
             'jueves': 4, 'viernes': 5, 'sabado': 6
         }
 
@@ -336,7 +376,7 @@ async def subir_disponibilidad_docente(
                 nombre_bd_clean = limpiar_texto(f"{p.nombre} {p.apellido}")
                 palabras_doc = set(nombre_doc_clean.split())
                 palabras_bd = set(nombre_bd_clean.split())
-                
+
                 if len(palabras_doc.intersection(palabras_bd)) >= 2:
                     prof = p
                     break
@@ -378,7 +418,7 @@ async def subir_disponibilidad_docente(
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Error al procesar la disponibilidad: {str(e)}"
         )
 
@@ -399,30 +439,61 @@ def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = De
 # 3. ALGORITMO Y EDITOR DE SINÓPTICOS
 # ===========================================================================
 
+@app.post("/api/sinopticos", status_code=201)
+def crear_sinoptico_vacio(
+    datos: schemas.GenerarSinopticoRequest,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """
+    Crea un sinóptico vacío (sin generar automáticamente ninguna clase), para
+    que el coordinador lo arme manualmente desde cero usando el '+' de la grilla.
+    """
+    nuevo = models.Sinoptico(
+        carrera_id=datos.carrera_id,
+        semestre_id=datos.semestre_id,
+        jornada=datos.jornada,
+    )
+    db.add(nuevo)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un sinóptico con esa carrera/semestre/jornada.")
+    db.refresh(nuevo)
+    return {"sinoptico_id": nuevo.id, "asignaturas_sin_asignar": []}
+
+
 @app.post("/api/sinopticos/generar")
 def generar_sinoptico(
-    datos: schemas.GenerarSinopticoRequest, 
-    db: Session = Depends(get_db), 
+    datos: schemas.GenerarSinopticoRequest,
+    db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_coordinador)
 ):
     """Generación automática asignando bloques respetando la disponibilidad docente sin choques horarios."""
-    
+
     # 1. Validar existencia de asignaturas activas para la carrera/escuela
-    asignaturas = db.query(models.Asignatura).join(
+    #    (opcionalmente filtradas por nivel_semestral, si viene en la petición)
+    query_asig = db.query(models.Asignatura).join(
         models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
     ).filter(
         models.PlanEstudio.carrera_id == datos.carrera_id,
         models.Asignatura.activo == True
-    ).all()
+    )
+    nivel_semestral = getattr(datos, "nivel_semestral", None)
+    if nivel_semestral:
+        query_asig = query_asig.filter(models.Asignatura.nivel_semestral == nivel_semestral)
+    asignaturas = query_asig.all()
 
     if not asignaturas:
         raise HTTPException(
-            status_code=404, 
+            status_code=404,
             detail=f"No se encontraron asignaturas activas para la carrera ID {datos.carrera_id}."
         )
 
     # 2. Convertir el valor de jornada de forma segura
     jornada_val = datos.jornada.value if hasattr(datos.jornada, 'value') else str(datos.jornada).lower()
+    es_mixta = jornada_val == "mixta"
 
     # 3. Crear el registro del sinóptico
     nuevo_sinoptico = models.Sinoptico(
@@ -432,17 +503,24 @@ def generar_sinoptico(
     )
     db.add(nuevo_sinoptico)
     db.flush()
-    jornada_id = obtener_jornada_id(db, datos.jornada)
+    jornada_id_fijo = obtener_jornada_id(db, datos.jornada)
 
-    # 4. Consultar bloques horarios para la jornada indicada
-    bloques = db.query(models.BloqueHorario).filter(
-        models.BloqueHorario.jornada == jornada_val
-    ).order_by(models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio).all()
-
-    if not bloques:
+    # 4. Consultar bloques horarios para la jornada indicada.
+    #    Si la jornada es "mixta", se consideran TODOS los bloques (diurnos y
+    #    vespertinos); cada sesión asignada conserva la jornada real de su bloque.
+    if es_mixta:
         bloques = db.query(models.BloqueHorario).order_by(
             models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio
         ).all()
+    else:
+        bloques = db.query(models.BloqueHorario).filter(
+            models.BloqueHorario.jornada == jornada_val
+        ).order_by(models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio).all()
+
+        if not bloques:
+            bloques = db.query(models.BloqueHorario).order_by(
+                models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio
+            ).all()
 
     profesores = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
     salas = db.query(models.Sala).filter(models.Sala.activo == True).all()
@@ -451,7 +529,7 @@ def generar_sinoptico(
     disponibilidades = db.query(models.DisponibilidadDocente).filter(
         models.DisponibilidadDocente.disponible == True
     ).all()
-    
+
     profesor_disponible_map = defaultdict(set)
     for disp in disponibilidades:
         profesor_disponible_map[disp.profesor_id].add(disp.bloque_horario_id)
@@ -471,7 +549,7 @@ def generar_sinoptico(
         if sala_id is not None:
             sala_ocupada[sala_id].add(bloque_id)
 
-        sin_asignar = []
+    sin_asignar = []
     profesor_carga = defaultdict(int)
     sala_carga = defaultdict(int)
     carga_dia = defaultdict(int)
@@ -482,6 +560,13 @@ def generar_sinoptico(
 
     def asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala):
         ids = [b.id for b in sesion]
+        # La jornada real de la sesión es la del primer bloque que la compone
+        # (relevante solo cuando el sinóptico es "mixto", donde el pool de
+        # bloques mezcla diurnos y vespertinos).
+        jornada_sesion = sesion[0].jornada
+        jornada_id_sesion = obtener_jornada_id(db, jornada_sesion) if es_mixta else jornada_id_fijo
+        letra_sesion = (jornada_sesion.value if hasattr(jornada_sesion, 'value') else str(jornada_sesion))[:1].upper() if es_mixta else jornada_val[:1].upper()
+
         for p in candidatos_prof:
             if p.id in profesor_disponible_map and any(i not in profesor_disponible_map[p.id] for i in ids):
                 continue
@@ -502,11 +587,11 @@ def generar_sinoptico(
                         profesor_id=p.id,
                         sala_id=s.id,
                         bloque_horario_id=b.id,
-                        seccion=f"{asignatura.codigo}-001{jornada_val[:1].upper()}",
+                        seccion=f"{asignatura.codigo}-001{letra_sesion}",
                         id_seccion=None,
                         fecha_inicio=inicio,
                         fecha_final=fin,
-                        jornada_id=jornada_id,
+                        jornada_id=jornada_id_sesion,
                         color=COLOR_DEFAULT,
                     ))
                 profesor_carga[p.id] += 1
@@ -577,6 +662,7 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
             "carrera": carrera.nombre,
             "codigo_carrera": carrera.codigo,
             "semestre": f"{semestre.anio}-{semestre.numero}",
+            "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada),
             "creado_en": sinoptico.creado_en,
         }
         for sinoptico, carrera, semestre in filas
@@ -585,6 +671,10 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
 
 @app.get("/api/sinopticos/{sinoptico_id}/eventos")
 def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
+
     filas = (
         db.query(models.SinopticoItem, models.Asignatura, models.Profesor, models.Sala, models.BloqueHorario, models.Jornada)
         .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
@@ -596,9 +686,8 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
         .all()
     )
 
-    if not filas:
-        raise HTTPException(status_code=404, detail="Sinóptico no encontrado o sin eventos asignados.")
-
+    # OJO: ya no se lanza 404 cuando el sinóptico existe pero aún no tiene
+    # eventos (p. ej. recién creado vacío con "Crear sinóptico vacío").
     eventos = []
     for item, asignatura, profesor, sala, bloque, jornada in filas:
         eventos.append({
@@ -707,18 +796,23 @@ def agregar_item_sinoptico(
         if choque_sala:
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
+    # Si el sinóptico es "mixto", la jornada del item se toma del bloque elegido;
+    # si no, se usa la jornada fija del sinóptico.
+    sinoptico_jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada)
+    jornada_para_item = bloque.jornada if sinoptico_jornada_val == "mixta" else sinoptico.jornada
+
     nuevo_item = models.SinopticoItem(
         sinoptico_id=datos.sinoptico_id,
         asignatura_id=datos.asignatura_id,
         profesor_id=datos.profesor_id,
         sala_id=datos.sala_id,
         bloque_horario_id=datos.bloque_horario_id,
-        seccion=generar_seccion(db, datos.sinoptico_id, asignatura, sinoptico.jornada),
+        seccion=generar_seccion(db, datos.sinoptico_id, asignatura, jornada_para_item),
         id_seccion=None,
         capacidad_inicial=datos.capacidad_inicial,
         fecha_inicio=inicio,
         fecha_final=fin,
-        jornada_id=obtener_jornada_id(db, sinoptico.jornada),
+        jornada_id=obtener_jornada_id(db, jornada_para_item),
         color=datos.color or COLOR_DEFAULT,
     )
     db.add(nuevo_item)
@@ -727,7 +821,7 @@ def agregar_item_sinoptico(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Error de restricción al guardar el ramo.")
-    
+
     db.refresh(nuevo_item)
     return nuevo_item
 
@@ -768,17 +862,19 @@ def editar_item_sinoptico(
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
+    sinoptico_jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada)
+    jornada_para_item = bloque.jornada if sinoptico_jornada_val == "mixta" else sinoptico.jornada
 
     if datos.asignatura_id != item.asignatura_id:
         asignatura = db.query(models.Asignatura).filter(models.Asignatura.id == datos.asignatura_id).first()
         if not asignatura:
             raise HTTPException(status_code=404, detail="La asignatura indicada no existe.")
-        item.seccion = generar_seccion(db, item.sinoptico_id, asignatura, sinoptico.jornada)
+        item.seccion = generar_seccion(db, item.sinoptico_id, asignatura, jornada_para_item)
 
     if datos.jornada_id is not None:
         item.jornada_id = datos.jornada_id
-    elif item.jornada_id is None:
-        item.jornada_id = obtener_jornada_id(db, sinoptico.jornada)
+    else:
+        item.jornada_id = obtener_jornada_id(db, jornada_para_item)
 
     item.asignatura_id = datos.asignatura_id
     item.profesor_id = datos.profesor_id
@@ -812,12 +908,20 @@ def mover_item_sinoptico(
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
-    nuevo_bloque = db.query(models.BloqueHorario).filter(
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
+    sinoptico_jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada)
+
+    # Si el sinóptico es "mixto", el bloque se busca por día/hora sin exigir una
+    # jornada específica (puede caer en un bloque diurno o vespertino).
+    query_bloque = db.query(models.BloqueHorario).filter(
         models.BloqueHorario.dia_semana == datos.dia_semana,
         models.BloqueHorario.hora_inicio == datos.hora_inicio,
         models.BloqueHorario.hora_fin == datos.hora_fin,
-        models.BloqueHorario.jornada == datos.jornada,
-    ).first()
+    )
+    if sinoptico_jornada_val != "mixta":
+        query_bloque = query_bloque.filter(models.BloqueHorario.jornada == datos.jornada)
+    nuevo_bloque = query_bloque.first()
+
     if not nuevo_bloque:
         raise HTTPException(
             status_code=404,
@@ -853,6 +957,8 @@ def mover_item_sinoptico(
 
     item.fecha_inicio, item.fecha_final = fechas_para_bloque(nuevo_bloque.dia_semana)
     item.bloque_horario_id = nuevo_bloque.id
+    if sinoptico_jornada_val == "mixta":
+        item.jornada_id = obtener_jornada_id(db, nuevo_bloque.jornada)
     try:
         db.commit()
     except IntegrityError:
@@ -863,6 +969,37 @@ def mover_item_sinoptico(
         )
     db.refresh(item)
     return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
+
+
+@app.patch("/api/sinopticos/{sinoptico_id}/asignaturas/{asignatura_id}/color")
+def actualizar_color_asignatura(
+    sinoptico_id: int,
+    asignatura_id: int,
+    datos: ColorUpdateRequest,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """
+    Iguala el color de TODOS los bloques de una asignatura dentro de un mismo
+    sinóptico (no afecta a esa asignatura en otros sinópticos).
+    """
+    items = db.query(models.SinopticoItem).filter(
+        models.SinopticoItem.sinoptico_id == sinoptico_id,
+        models.SinopticoItem.asignatura_id == asignatura_id,
+    ).all()
+    if not items:
+        raise HTTPException(status_code=404, detail="No hay bloques de esa asignatura en este sinóptico.")
+
+    for item in items:
+        item.color = datos.color
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="No se pudo actualizar el color de la asignatura.")
+
+    return {"ok": True, "actualizados": len(items)}
 
 
 @app.delete("/api/sinopticos/items/{item_id}", status_code=204)
