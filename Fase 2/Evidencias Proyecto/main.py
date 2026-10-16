@@ -358,8 +358,17 @@ async def subir_disponibilidad_docente(
         profesores_bd = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
         bloques_bd = db.query(models.BloqueHorario).all()
 
-        db.query(models.DisponibilidadDocente).delete()
+        # Solo se reemplaza lo que vino de un Excel anterior; lo agregado a mano
+        # por el administrador (origen='manual') se conserva.
+        db.query(models.DisponibilidadDocente).filter(
+            models.DisponibilidadDocente.origen == "excel"
+        ).delete(synchronize_session=False)
         db.commit()
+
+        ya_registrados = {
+            (d.profesor_id, d.bloque_horario_id)
+            for d in db.query(models.DisponibilidadDocente).all()
+        }
 
         registros_creados = 0
 
@@ -399,13 +408,15 @@ async def subir_disponibilidad_docente(
                                     bloque = b
                                     break
 
-                        if bloque:
+                        if bloque and (prof.id, bloque.id) not in ya_registrados:
                             nueva_disp = models.DisponibilidadDocente(
                                 profesor_id=prof.id,
                                 bloque_horario_id=bloque.id,
-                                disponible=True
+                                disponible=True,
+                                origen="excel",
                             )
                             db.add(nueva_disp)
+                            ya_registrados.add((prof.id, bloque.id))
                             registros_creados += 1
 
         db.commit()
@@ -421,6 +432,252 @@ async def subir_disponibilidad_docente(
             status_code=500,
             detail=f"Error al procesar la disponibilidad: {str(e)}"
         )
+
+
+@app.get("/api/profesores/disponibilidad")
+def resumen_disponibilidad_profesores(
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
+    """Cantidad de bloques disponibles por profesor (para listarlos con su resumen)."""
+    filas = (
+        db.query(models.DisponibilidadDocente.profesor_id, func.count(models.DisponibilidadDocente.id))
+        .filter(models.DisponibilidadDocente.disponible.is_(True))
+        .group_by(models.DisponibilidadDocente.profesor_id)
+        .all()
+    )
+    return {str(profesor_id): total for profesor_id, total in filas}
+
+
+@app.get("/api/profesores/{profesor_id}/disponibilidad")
+def disponibilidad_profesor(
+    profesor_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
+    """
+    Bloques en los que el profesor está disponible y bloques en los que ya
+    tiene una clase asignada en algún sinóptico (para ver cuáles están realmente libres).
+    """
+    profesor = db.query(models.Profesor).filter(models.Profesor.id == profesor_id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="El profesor indicado no existe.")
+
+    disponibles = db.query(models.DisponibilidadDocente.bloque_horario_id).filter(
+        models.DisponibilidadDocente.profesor_id == profesor_id,
+        models.DisponibilidadDocente.disponible.is_(True),
+    ).all()
+    ocupados = db.query(models.SinopticoItem.bloque_horario_id).filter(
+        models.SinopticoItem.profesor_id == profesor_id
+    ).all()
+
+    return {
+        "profesor_id": profesor_id,
+        "bloques_disponibles": sorted({r[0] for r in disponibles}),
+        "bloques_ocupados": sorted({r[0] for r in ocupados}),
+    }
+
+
+class DisponibilidadManualRequest(BaseModel):
+    bloque_horario_ids: List[int]
+    disponible: bool
+
+
+@app.put("/api/profesores/{profesor_id}/disponibilidad")
+def fijar_disponibilidad_manual(
+    profesor_id: int,
+    datos: DisponibilidadManualRequest,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """
+    Marca (disponible=true) o desmarca (disponible=false) uno o varios bloques
+    para un profesor, a mano. Sirve para sumar días/horas extra a lo que vino
+    en el Excel. Lo marcado aquí queda como origen='manual' y NO se pierde al
+    volver a cargar el Excel de disponibilidad.
+    """
+    profesor = db.query(models.Profesor).filter(models.Profesor.id == profesor_id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="El profesor indicado no existe.")
+
+    ids = set(datos.bloque_horario_ids)
+    if not ids:
+        return {"ok": True, "cambiados": 0}
+
+    existentes_bloques = {
+        r[0] for r in db.query(models.BloqueHorario.id).filter(models.BloqueHorario.id.in_(ids)).all()
+    }
+    if existentes_bloques != ids:
+        raise HTTPException(status_code=404, detail="Alguno de los bloques horarios indicados no existe.")
+
+    if datos.disponible:
+        ya = {
+            r[0] for r in db.query(models.DisponibilidadDocente.bloque_horario_id).filter(
+                models.DisponibilidadDocente.profesor_id == profesor_id,
+                models.DisponibilidadDocente.bloque_horario_id.in_(ids),
+            ).all()
+        }
+        for bloque_id in ids - ya:
+            db.add(models.DisponibilidadDocente(
+                profesor_id=profesor_id,
+                bloque_horario_id=bloque_id,
+                disponible=True,
+                origen="manual",
+            ))
+        # Si existía la fila (p. ej. del Excel) solo se asegura que esté disponible
+        db.query(models.DisponibilidadDocente).filter(
+            models.DisponibilidadDocente.profesor_id == profesor_id,
+            models.DisponibilidadDocente.bloque_horario_id.in_(ids),
+        ).update({"disponible": True}, synchronize_session=False)
+    else:
+        db.query(models.DisponibilidadDocente).filter(
+            models.DisponibilidadDocente.profesor_id == profesor_id,
+            models.DisponibilidadDocente.bloque_horario_id.in_(ids),
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"ok": True, "cambiados": len(ids)}
+
+
+# ---------------------------------------------------------------------------
+# PORTAL DOCENTE: "mi horario" y "subir mi horario"
+# El usuario se vincula con su ficha de profesor por nombre (mismo criterio
+# que la carga del Excel: al menos 2 palabras en común entre el nombre del
+# usuario y "nombre apellido" del profesor).
+# ---------------------------------------------------------------------------
+
+def _profesor_del_usuario(db: Session, usuario: models.Usuario):
+    palabras_usuario = set(limpiar_texto(usuario.nombre or "").split())
+    mejor, mejor_score = None, 0
+    for p in db.query(models.Profesor).filter(models.Profesor.activo == True).all():
+        palabras_prof = set(limpiar_texto(f"{p.nombre} {p.apellido}").split())
+        score = len(palabras_usuario & palabras_prof)
+        if score >= 2 and score > mejor_score:
+            mejor, mejor_score = p, score
+    return mejor
+
+
+@app.get("/api/docente/mi-horario")
+def mi_horario_docente(
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(require_docente),
+):
+    """Clases asignadas al profesor logeado (en cualquier sinóptico), en formato calendario."""
+    profesor = _profesor_del_usuario(db, usuario)
+    if not profesor:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró una ficha de profesor que coincida con tu nombre de usuario. Pide al administrador que lo revise.",
+        )
+
+    filas = (
+        db.query(models.SinopticoItem, models.Asignatura, models.Sala, models.BloqueHorario, models.Jornada, models.Sinoptico)
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.Sala, models.SinopticoItem.sala_id == models.Sala.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .outerjoin(models.Jornada, models.SinopticoItem.jornada_id == models.Jornada.id)
+        .join(models.Sinoptico, models.SinopticoItem.sinoptico_id == models.Sinoptico.id)
+        .filter(models.SinopticoItem.profesor_id == profesor.id)
+        .all()
+    )
+
+    eventos = []
+    for item, asignatura, sala, bloque, jornada, sinoptico in filas:
+        eventos.append({
+            "id": item.id,
+            "title": asignatura.nombre,
+            "daysOfWeek": [bloque.dia_semana],
+            "startTime": bloque.hora_inicio.strftime("%H:%M:%S"),
+            "endTime": bloque.hora_fin.strftime("%H:%M:%S"),
+            "extendedProps": {
+                "codigo": asignatura.codigo,
+                "profesor": f"{profesor.nombre} {profesor.apellido}",
+                "sala": sala.nombre if sala else "Sin asignar",
+                "jornada": jornada.nombre if jornada else bloque.jornada.value,
+                "seccion": item.seccion,
+                "sinoptico_id": item.sinoptico_id,
+                "color": item.color,
+            },
+        })
+
+    return {
+        "profesor": f"{profesor.nombre} {profesor.apellido}",
+        "eventos": eventos,
+    }
+
+
+@app.post("/api/docente/disponibilidad/upload")
+async def subir_mi_disponibilidad(
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(require_docente),
+):
+    """
+    El profesor logeado sube su propio Excel de disponibilidad (mismas columnas
+    que la plantilla: hora_inicio, lunes..sabado con 1/0; la columna
+    nombre_docente se ignora porque todo se asigna a quien sube el archivo).
+    Reemplaza solo SU disponibilidad de origen 'excel'; lo agregado a mano
+    por el administrador se conserva.
+    """
+    profesor = _profesor_del_usuario(db, usuario)
+    if not profesor:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró una ficha de profesor que coincida con tu nombre de usuario. Pide al administrador que lo revise.",
+        )
+
+    try:
+        df = pd.read_excel(io.BytesIO(await archivo.read()))
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        if "hora_inicio" not in df.columns:
+            raise HTTPException(status_code=400, detail="El archivo debe tener la columna 'hora_inicio'.")
+
+        dias_map = {'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4, 'viernes': 5, 'sabado': 6}
+        bloques_bd = db.query(models.BloqueHorario).all()
+        bloque_por_clave = {
+            (b.dia_semana, formatear_hora_hhmm(b.hora_inicio)): b for b in bloques_bd
+        }
+
+        db.query(models.DisponibilidadDocente).filter(
+            models.DisponibilidadDocente.profesor_id == profesor.id,
+            models.DisponibilidadDocente.origen == "excel",
+        ).delete(synchronize_session=False)
+        db.commit()
+
+        ya = {
+            d.bloque_horario_id
+            for d in db.query(models.DisponibilidadDocente).filter(
+                models.DisponibilidadDocente.profesor_id == profesor.id
+            ).all()
+        }
+
+        creados = 0
+        for _, row in df.iterrows():
+            if pd.isnull(row["hora_inicio"]):
+                continue
+            hhmm = formatear_hora_hhmm(row["hora_inicio"])
+            for col_dia, dia_num in dias_map.items():
+                if col_dia in row and pd.notnull(row[col_dia]) and int(row[col_dia]) == 1:
+                    bloque = bloque_por_clave.get((dia_num, hhmm))
+                    if bloque and bloque.id not in ya:
+                        db.add(models.DisponibilidadDocente(
+                            profesor_id=profesor.id,
+                            bloque_horario_id=bloque.id,
+                            disponible=True,
+                            origen="excel",
+                        ))
+                        ya.add(bloque.id)
+                        creados += 1
+
+        db.commit()
+        return {"ok": True, "mensaje": f"Tu disponibilidad quedó cargada: {creados} bloques disponibles."}
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al procesar tu archivo: {str(e)}")
 
 
 @app.get("/api/salas", response_model=List[schemas.SalaOut])

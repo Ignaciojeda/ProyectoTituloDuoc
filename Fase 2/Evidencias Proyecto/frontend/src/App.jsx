@@ -8,7 +8,9 @@ import SinopticoPage from './pages/SinopticoPage'
 import SinopticosGaleria from './pages/SinopticosGaleria'
 import SalasGaleria from './pages/SalasGaleria'
 import SalaHorarioPage from './pages/SalaHorarioPage'
+import DocenteHorarioPage from './pages/DocenteHorarioPage'
 import ProtectedRoute from './components/ProtectedRoute'
+import ProfesorDisponibilidadPage from './pages/Profesordisponibilidadpage'
 
 export default function App() {
   return (
@@ -29,6 +31,9 @@ export default function App() {
 
         <Route path="/docente" element={
           <ProtectedRoute rolesPermitidos={['docente']}><DocentePage /></ProtectedRoute>
+        } />
+        <Route path="/docente/horario" element={
+          <ProtectedRoute rolesPermitidos={['docente']}><DocenteHorarioPage /></ProtectedRoute>
         } />
 
         {/* Coordinador Y administrador pueden generar/editar sinópticos
@@ -52,6 +57,11 @@ export default function App() {
         } />
         <Route path="/salas/horario" element={
           <ProtectedRoute rolesPermitidos={['coordinador', 'administrador', 'docente']}><SalaHorarioPage /></ProtectedRoute>
+        } />
+
+        {/* Disponibilidad de profesores: ver y editar, solo coordinador y administrador. */}
+        <Route path="/profesores/disponibilidad" element={
+          <ProtectedRoute rolesPermitidos={['coordinador', 'administrador']}><ProfesorDisponibilidadPage /></ProtectedRoute>
         } />
 
         <Route path="*" element={<Navigate to="/login" replace />} />

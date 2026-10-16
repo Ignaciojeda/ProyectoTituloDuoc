@@ -49,6 +49,20 @@ export default function CoordinadorPage() {
             Ver horarios de salas
           </Link>
         </div>
+
+        <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
+              🧑‍🏫 Disponibilidad de Profesores
+            </h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
+              Consulte los días y horas disponibles de cada profesor y agregue o quite bloques manualmente cuando soliciten más horario.
+            </p>
+          </div>
+          <Link to="/profesores/disponibilidad" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
+            Ver y editar disponibilidad
+          </Link>
+        </div>
       </div>
     </div>
   )

@@ -223,6 +223,6 @@ class DisponibilidadDocente(Base):
     profesor_id = Column(Integer, ForeignKey("profesor.id", ondelete="CASCADE"), nullable=False)
     bloque_horario_id = Column(Integer, ForeignKey("bloque_horario.id", ondelete="CASCADE"), nullable=False)
     disponible = Column(Boolean, nullable=False, default=True)
-
+    origen = Column(String(10), nullable=False, default="excel", server_default="excel")
     profesor = relationship("Profesor")
     bloque_horario = relationship("BloqueHorario")
