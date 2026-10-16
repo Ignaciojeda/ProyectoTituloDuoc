@@ -88,10 +88,6 @@ def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
     fin = inicio + timedelta(weeks=semanas)
     return inicio, fin
 
-def sesiones_por_semana(asignatura):
-    horas = getattr(asignatura, "horas", None) or 4
-    return max(2, min(3, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
-
 def tamanos_sesiones(asignatura):
     """Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
     horas = getattr(asignatura, "horas", None) or 4
