@@ -90,7 +90,16 @@ def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
 
 def sesiones_por_semana(asignatura):
     horas = getattr(asignatura, "horas", None) or 4
-    return max(1, min(4, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
+    return max(2, min(3, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
+
+def tamanos_sesiones(asignatura):
+    """Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
+    horas = getattr(asignatura, "horas", None) or 4
+    horas = max(1, min(8, int(horas)))
+    tamanos = [2] * (horas // 2)
+    if horas % 2:
+        tamanos.append(1)
+    return tamanos
 
 def pares_consecutivos(bloques):
     por_dia = defaultdict(list)
@@ -298,6 +307,7 @@ def listar_asignaturas(
     if nivel_semestral is not None:
         query = query.filter(models.Asignatura.nivel_semestral == nivel_semestral)
     return query.order_by(models.Asignatura.codigo).all()
+
 
 
 @app.post("/api/asignaturas", response_model=schemas.AsignaturaOut)
@@ -742,6 +752,10 @@ def generar_sinoptico(
         query_asig = query_asig.filter(models.Asignatura.nivel_semestral == nivel_semestral)
     asignaturas = query_asig.all()
 
+    plan_estudio_id = getattr(datos, "plan_estudio_id", None)
+    if plan_estudio_id:
+        query_asig = query_asig.filter(models.Asignatura.plan_estudio_id == plan_estudio_id)
+
     if not asignaturas:
         raise HTTPException(
             status_code=404,
@@ -814,6 +828,7 @@ def generar_sinoptico(
 
     ranuras = ranuras_con_ventanas(bloques)
     todas_las_sesiones = pares_consecutivos(bloques)
+    todas_simples = [(b,) for b in bloques if b.dia_semana in DIAS_CLASES]
 
     def asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala):
         ids = [b.id for b in sesion]
@@ -868,11 +883,17 @@ def generar_sinoptico(
         dias_del_ramo = set()
         colocadas = 0
 
-        for _ in range(sesiones_por_semana(asignatura)):
-            libres = [x for x in ranuras if not any(b.id in bloques_usados for b in x)]
-            libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)  # días distintos primero
-            respaldo = [x for x in todas_las_sesiones if not any(b.id in bloques_usados for b in x)]
-            respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
+        for tam in tamanos_sesiones(asignatura):
+            if tam == 1:
+                libres = [x for x in todas_simples if x[0].id not in bloques_usados]
+                random.shuffle(libres)
+                libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)
+                respaldo = []
+            else:
+                libres = [x for x in ranuras if not any(b.id in bloques_usados for b in x)]
+                libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)  # días distintos primero
+                respaldo = [x for x in todas_las_sesiones if not any(b.id in bloques_usados for b in x)]
+                respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
 
             for sesion in libres + respaldo:
                 r = asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala)

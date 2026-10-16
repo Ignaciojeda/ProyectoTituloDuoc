@@ -112,6 +112,8 @@ class GenerarSinopticoRequest(BaseModel):
     carrera_id: int
     semestre_id: int
     jornada: JornadaTipo = JornadaTipo.diurno
+    plan_estudio_id: Optional[int] = None
+    nivel_semestral: Optional[int] = None
 
 
 class SinopticoOut(BaseModel):
