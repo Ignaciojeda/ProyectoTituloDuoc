@@ -128,44 +128,8 @@ def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
     fin = inicio + timedelta(weeks=semanas)
     return inicio, fin
 
-def parse_semanas(valor):
-    """'1,3,5' -> [1,3,5]. None o vacío = todas las semanas (devuelve None)."""
-    if not valor:
-        return None
-    try:
-        lista = sorted({int(x) for x in str(valor).split(",") if x.strip()})
-    except ValueError:
-        return None
-    lista = [w for w in lista if 1 <= w <= SEMANAS_DEFAULT]
-    if not lista or len(lista) == SEMANAS_DEFAULT:
-        return None
-    return lista
-
-
-def serializar_semanas(lista):
-    """Lista de semanas -> texto para guardar; todas las semanas se guarda como NULL."""
-    lista = sorted({int(w) for w in lista if 1 <= int(w) <= SEMANAS_DEFAULT})
-    if not lista or len(lista) == SEMANAS_DEFAULT:
-        return None
-    return ",".join(str(w) for w in lista)
-
-
-def fechas_para_item(dia_semana: int, semanas_texto=None):
-    """Igual que fechas_para_bloque, pero acotado a la primera y última semana elegidas."""
-    lista = parse_semanas(semanas_texto)
-    if not lista:
-        return fechas_para_bloque(dia_semana)
-    offset = timedelta(days=dia_semana - 1)
-    inicio = LUNES_INICIO_SEMESTRE + timedelta(weeks=lista[0] - 1) + offset
-    fin = LUNES_INICIO_SEMESTRE + timedelta(weeks=lista[-1]) + offset
-    return inicio, fin
-
-def sesiones_por_semana(asignatura):
-    horas = getattr(asignatura, "horas", None) or 4
-    return max(1, min(4, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
-
 def tamanos_sesiones(asignatura):
-    """Módulos de cada sesión semanal. Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
+    """Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
     horas = getattr(asignatura, "horas", None) or 4
     horas = max(1, min(8, int(horas)))
     tamanos = [2] * (horas // 2)
@@ -376,6 +340,7 @@ def listar_asignaturas(
     if nivel_semestral is not None:
         query = query.filter(models.Asignatura.nivel_semestral == nivel_semestral)
     return query.order_by(models.Asignatura.codigo).all()
+
 
 
 @app.post("/api/asignaturas", response_model=schemas.AsignaturaOut)
@@ -834,6 +799,10 @@ def generar_sinoptico(
         query_asig = query_asig.filter(models.Asignatura.nivel_semestral == nivel_semestral)
     asignaturas = query_asig.all()
 
+    plan_estudio_id = getattr(datos, "plan_estudio_id", None)
+    if plan_estudio_id:
+        query_asig = query_asig.filter(models.Asignatura.plan_estudio_id == plan_estudio_id)
+
     if not asignaturas:
         raise HTTPException(
             status_code=404,
@@ -906,7 +875,7 @@ def generar_sinoptico(
 
     ranuras = ranuras_con_ventanas(bloques)
     todas_las_sesiones = pares_consecutivos(bloques)
-    todos_los_simples = [(b,) for b in sorted(bloques, key=lambda b: (b.dia_semana, b.hora_inicio))]
+    todas_simples = [(b,) for b in bloques if b.dia_semana in DIAS_CLASES]
 
     def asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala):
         ids = [b.id for b in sesion]
@@ -963,11 +932,10 @@ def generar_sinoptico(
 
         for tam in tamanos_sesiones(asignatura):
             if tam == 1:
-                # sesión de 1 módulo (cuando las horas son impares): cualquier bloque libre
-                libres = [x for x in todos_los_simples if x[0].dia_semana in DIAS_CLASES and x[0].id not in bloques_usados]
-                libres.sort(key=lambda x: (x[0].dia_semana in dias_del_ramo, carga_dia[x[0].dia_semana]))
-                respaldo = [x for x in todos_los_simples if x[0].id not in bloques_usados]
-                respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
+                libres = [x for x in todas_simples if x[0].id not in bloques_usados]
+                random.shuffle(libres)
+                libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)
+                respaldo = []
             else:
                 libres = [x for x in ranuras if not any(b.id in bloques_usados for b in x)]
                 libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)  # días distintos primero
