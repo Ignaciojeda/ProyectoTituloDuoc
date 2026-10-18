@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar'
 import api from '../api/axios'
 import SelectorColor from '../components/SelectorColor'
 import { COLOR_DEFAULT, colorValido, colorTextoSobre } from '../utils/color'
+import { descargarPdfSinoptico } from '../utils/pdf'
 import '../duoc.css'
 
 const MODULOS_DUOC = [
@@ -142,6 +143,32 @@ export default function SinopticoPage() {
     return asignaturas.filter(a => String(a.nivel_semestral) === String(nivelSel))
   }, [asignaturas, nivelSel])
 
+  // Ids de las asignaturas que pertenecen a la carrera elegida (para mostrarlas primero)
+  const [idsAsignaturasCarrera, setIdsAsignaturasCarrera] = useState(new Set())
+  useEffect(() => {
+    if (!carreraSel) {
+      setIdsAsignaturasCarrera(new Set())
+      return
+    }
+    api.get(`/asignaturas?carrera_id=${carreraSel}`)
+      .then(res => setIdsAsignaturasCarrera(new Set(res.data.map(a => a.id))))
+      .catch(() => setIdsAsignaturasCarrera(new Set()))
+  }, [carreraSel])
+
+  // Opciones del select de asignaturas: primero las de la carrera, luego las demás
+  const opcionesAsignaturas = () => {
+    const delaCarrera = asignaturasFiltradas.filter(a => idsAsignaturasCarrera.has(a.id))
+    const otras = asignaturasFiltradas.filter(a => !idsAsignaturasCarrera.has(a.id))
+    const opcion = a => <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
+    if (!delaCarrera.length) return asignaturasFiltradas.map(opcion)
+    return (
+      <>
+        <optgroup label="★ De la carrera">{delaCarrera.map(opcion)}</optgroup>
+        {otras.length > 0 && <optgroup label="Otras carreras">{otras.map(opcion)}</optgroup>}
+      </>
+    )
+  }
+
   // Cargar profesores por disponibilidad cuando cambia el bloque seleccionado en "Agregar"
   useEffect(() => {
     if (agregandoNuevo && nuevoItem.bloque_horario_id) {
@@ -152,18 +179,19 @@ export default function SinopticoPage() {
   // Cargar profesores por disponibilidad cuando cambia el bloque seleccionado en "Editar"
   useEffect(() => {
     if (itemEditando && itemEditando.bloque_horario_id) {
-      cargarProfesoresPorDisponibilidad(itemEditando.bloque_horario_id)
+      cargarProfesoresPorDisponibilidad(itemEditando.bloque_horario_id, itemEditando.id)
     }
   }, [itemEditando?.bloque_horario_id])
 
-  const cargarProfesoresPorDisponibilidad = async (bloqueHorarioId) => {
+  const cargarProfesoresPorDisponibilidad = async (bloqueHorarioId, excluirItemId = null) => {
     if (!bloqueHorarioId) {
       setProfesoresDisponibles(profesores)
       return
     }
     setCargandoProfesores(true)
     try {
-      const { data } = await api.get(`/profesores?bloque_horario_id=${bloqueHorarioId}`)
+      const extra = excluirItemId ? `&excluir_item_id=${excluirItemId}` : ''
+      const { data } = await api.get(`/profesores?bloque_horario_id=${bloqueHorarioId}${extra}`)
       setProfesoresDisponibles(data)
     } catch (err) {
       console.error('Error al filtrar profesores por disponibilidad:', err)
@@ -172,6 +200,16 @@ export default function SinopticoPage() {
       setCargandoProfesores(false)
     }
   }
+
+  // Al abrir/seleccionar un sinóptico existente se toma su carrera y jornada, para que
+  // funcionen el resaltado de profesores y el orden de asignaturas (igual que al crear uno).
+  useEffect(() => {
+    if (!sinopticoSel) return
+    const existente = sinopticosExistentes.find(x => String(x.id) === String(sinopticoSel))
+    if (!existente) return
+    if (existente.carrera_id) setCarreraSel(String(existente.carrera_id))
+    if (existente.jornada) setJornadaSel(existente.jornada)
+  }, [sinopticoSel, sinopticosExistentes])
 
   useEffect(() => {
     const idDesdeUrl = searchParams.get('id')
@@ -240,6 +278,18 @@ export default function SinopticoPage() {
     }
   }
 
+  const handleExportarPdf = async () => {
+    if (!sinopticoSel) {
+      setMensaje('Primero seleccione un sinóptico de la lista.')
+      return
+    }
+    try {
+      await descargarPdfSinoptico(sinopticoSel)
+    } catch (err) {
+      setMensaje('No se pudo generar el PDF del sinóptico.')
+    }
+  }
+
   const handleEliminarSinoptico = async () => {
     if (!sinopticoSel) {
       setMensaje('Primero seleccione un sinóptico de la lista.')
@@ -277,6 +327,29 @@ export default function SinopticoPage() {
     }
   }
 
+  // --- Semanas en que se dicta la asignatura (1..17) ---
+  const TOTAL_SEMANAS = 17
+  const TODAS_LAS_SEMANAS = Array.from({ length: TOTAL_SEMANAS }, (_, i) => i + 1)
+  const PRESETS_SEMANAS = [
+    { nombre: 'Todas las semanas', semanas: TODAS_LAS_SEMANAS },
+    { nombre: 'Semana por medio (impares)', semanas: TODAS_LAS_SEMANAS.filter(w => w % 2 === 1) },
+    { nombre: 'Semana por medio (pares)', semanas: TODAS_LAS_SEMANAS.filter(w => w % 2 === 0) },
+    { nombre: 'Una vez al mes', semanas: [1, 5, 9, 13, 17] },
+  ]
+
+  const alternarSemana = (w) => {
+    setItemEditando(prev => {
+      const actual = new Set(prev.semanas)
+      actual.has(w) ? actual.delete(w) : actual.add(w)
+      return { ...prev, semanas: [...actual].sort((a, b) => a - b) }
+    })
+  }
+
+  const textoSemanas = (semanas) => {
+    if (!semanas || semanas.length === TOTAL_SEMANAS) return 'Todas las semanas'
+    return `Semanas: ${semanas.join(', ')}`
+  }
+
   const abrirEditorBloque = (clase) => {
     const bloqueId = clase.extendedProps?.bloque_horario_id ?? ''
     setItemEditando({
@@ -289,9 +362,11 @@ export default function SinopticoPage() {
       id_seccion: clase.extendedProps?.id_seccion ?? '',
       capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
       color: colorValido(clase.extendedProps?.color),
+      semanas: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
+      semanasOriginales: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
     })
     if (bloqueId) {
-      cargarProfesoresPorDisponibilidad(bloqueId)
+      cargarProfesoresPorDisponibilidad(bloqueId, clase.id)
     }
   }
 
@@ -321,6 +396,18 @@ export default function SinopticoPage() {
         })
       } catch (errColor) {
         console.error('No se pudo propagar el color a la asignatura:', errColor)
+      }
+
+      // Semanas en que se dicta: se aplican a todos los bloques de la asignatura
+      const cambioSemanas = JSON.stringify(itemEditando.semanas) !== JSON.stringify(itemEditando.semanasOriginales)
+      if (cambioSemanas) {
+        if (!itemEditando.semanas.length) {
+          window.alert('Debes marcar al menos una semana.')
+          return
+        }
+        await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${itemEditando.asignatura_id}/semanas`, {
+          semanas: itemEditando.semanas,
+        })
       }
 
       setMensaje('Bloque actualizado correctamente.')
@@ -470,7 +557,7 @@ export default function SinopticoPage() {
         dia_semana: nuevoDiaKey,
         hora_inicio: `${horaIni}:00`,
         hora_fin: `${horaFin}:00`,
-        jornada: clase.extendedProps?.jornada || jornadaSel,
+        jornada: String(clase.extendedProps?.jornada || jornadaSel).toLowerCase(),
       })
       setMensaje('Bloque movido correctamente.')
     } catch (err) {
@@ -607,6 +694,15 @@ export default function SinopticoPage() {
                   <option key={s.id} value={s.id}>#{s.id} - {s.carrera} ({s.semestre})</option>
                 ))}
               </select>
+
+              <button
+                onClick={handleExportarPdf}
+                disabled={!sinopticoSel}
+                className="duoc-btn-accent"
+                style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%', opacity: sinopticoSel ? 1 : 0.6, cursor: sinopticoSel ? 'pointer' : 'not-allowed' }}
+              >
+                Exportar PDF
+              </button>
 
               <button
                 onClick={handleEliminarSinoptico}
@@ -769,6 +865,7 @@ export default function SinopticoPage() {
                             </div>
                             <div style={{ color: colorTexto, opacity: 0.9, fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.extendedProps?.seccion || clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
+                              {clase.extendedProps?.semanas ? ` · ${clase.extendedProps.semanas.length} sem.` : ''}
                             </div>
                           </div>
                         ) : (
@@ -827,9 +924,7 @@ export default function SinopticoPage() {
                 onChange={e => setItemEditando({ ...itemEditando, asignatura_id: e.target.value })}
               >
                 <option value="">-- Seleccionar --</option>
-                {asignaturasFiltradas.map(a => (
-                  <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
-                ))}
+                {opcionesAsignaturas()}
               </select>
             </div>
 
@@ -920,6 +1015,46 @@ export default function SinopticoPage() {
               />
             </div>
 
+            <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>
+                Semanas en que se dicta (aplica a toda la asignatura en este sinóptico)
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '6px' }}>
+                {PRESETS_SEMANAS.map(p => (
+                  <button
+                    key={p.nombre}
+                    type="button"
+                    onClick={() => setItemEditando({ ...itemEditando, semanas: p.semanas })}
+                    style={{ fontSize: '10px', padding: '3px 6px', border: '1px solid var(--border-color)', borderRadius: '4px', background: '#fff', cursor: 'pointer' }}
+                  >
+                    {p.nombre}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '4px' }}>
+                {TODAS_LAS_SEMANAS.map(w => {
+                  const marcada = itemEditando.semanas.includes(w)
+                  return (
+                    <label
+                      key={w}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px',
+                        fontSize: '10px', padding: '3px 0', cursor: 'pointer', borderRadius: '4px',
+                        border: '1px solid var(--border-color)',
+                        background: marcada ? 'var(--duoc-yellow)' : '#fff',
+                      }}
+                    >
+                      <input type="checkbox" checked={marcada} onChange={() => alternarSemana(w)} style={{ margin: 0 }} />
+                      {w}
+                    </label>
+                  )
+                })}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                {textoSemanas(itemEditando.semanas)}
+              </div>
+            </div>
+
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={guardarEdicionBloque}
@@ -970,9 +1105,7 @@ export default function SinopticoPage() {
                 onChange={e => setNuevoItem({ ...nuevoItem, asignatura_id: e.target.value })}
               >
                 <option value="">-- Seleccionar --</option>
-                {asignaturasFiltradas.map(a => (
-                  <option key={a.id} value={a.id}>{a.nombre} ({a.codigo})</option>
-                ))}
+                {opcionesAsignaturas()}
               </select>
             </div>
 

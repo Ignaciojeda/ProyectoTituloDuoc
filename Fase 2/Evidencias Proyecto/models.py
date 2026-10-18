@@ -175,6 +175,7 @@ class SinopticoItem(Base):
     sala_id = Column(Integer, ForeignKey("sala.id", ondelete="SET NULL"), nullable=True)
     bloque_horario_id = Column(Integer, ForeignKey("bloque_horario.id"), nullable=False)
     jornada_id = Column(Integer, ForeignKey("jornada.id", ondelete="SET NULL"), nullable=True)
+    semanas = Column(String(80), nullable=True)
 
     id_seccion = Column(String(30), nullable=True)
     seccion = Column(String(50), nullable=True)
