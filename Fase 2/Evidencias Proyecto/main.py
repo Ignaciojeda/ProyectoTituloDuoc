@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File,  Response
 import io
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +13,8 @@ from collections import defaultdict
 from typing import Optional, List
 from sqlalchemy import func
 from pydantic import BaseModel
+from pdf_sinoptico import construir_pdf_sinoptico
+from zoneinfo import ZoneInfo
 
 
 class ColorUpdateRequest(BaseModel):
@@ -64,6 +66,12 @@ PALABRA_CLAVE_AREA = {
     "contabilidad": ["contabilidad", "finanzas", "costos", "tributaria"],
     "ingles": ["ingles", "english"],
     "lenguaje": ["lenguaje", "comunicacion", "redaccion"],
+    "prevencion_riesgos": ["prevencion", "riesgos", "seguridad laboral", "higiene industrial"],
+    "trabajo_social": ["trabajo social", "social", "comunitari", "familia"],
+    "diseno_grafico": ["diseno", "grafico", "ilustracion", "tipografia", "multimedia"],
+    "turismo": ["turismo", "hoteleria", "turistic"],
+    "gastronomia": ["gastronomia", "cocina", "culinari", "pasteleria", "panaderia", "alimentos"],
+    "enfermeria": ["enfermeria", "clinic", "anatomia", "salud", "farmacologia"],
 }
 
 def area_para_asignatura(nombre_asignatura: str):
@@ -79,6 +87,70 @@ DIAS_CLASES = {1, 2, 3, 4, 5}  # lunes a viernes
 VENTANA_MIN = 2
 VENTANA_MAX = 3
 MODULOS_POR_SESION = 2  # una clase = 2 módulos seguidos
+
+
+def areas_de_carrera(nombre_carrera: str, nombres_asignaturas):
+    """
+    Áreas docentes propias de una carrera. Se prioriza el nombre de la carrera
+    (ej. 'Administración y Negocios' -> administracion) y se suman solo las áreas
+    que aparecen en una parte relevante de sus asignaturas, para que un ramo suelto
+    (ej. 'Sistemas de información' en Administración) no marque a todo un área.
+    """
+    areas = set()
+    nombre_c = limpiar_texto(nombre_carrera)
+    for area, palabras in PALABRA_CLAVE_AREA.items():
+        if any(p in nombre_c for p in palabras):
+            areas.add(area)
+
+    conteo = defaultdict(int)
+    for n in nombres_asignaturas:
+        area = area_para_asignatura(n)
+        if area:
+            conteo[area] += 1
+    total = len(nombres_asignaturas) or 1
+    for area, cant in conteo.items():
+        if cant >= 2 and cant / total >= 0.15:
+            areas.add(area)
+
+    if not areas and conteo:
+        areas.add(max(conteo, key=conteo.get))
+    return areas
+
+def parse_semanas(valor):
+    """'1,3,5' -> [1,3,5]. None o vacío = todas las semanas (devuelve None)."""
+    if not valor:
+        return None
+    try:
+        lista = sorted({int(x) for x in str(valor).split(",") if x.strip()})
+    except ValueError:
+        return None
+    lista = [w for w in lista if 1 <= w <= SEMANAS_DEFAULT]
+    if not lista or len(lista) == SEMANAS_DEFAULT:
+        return None
+    return lista
+
+
+def serializar_semanas(lista):
+    """Lista de semanas -> texto para guardar; todas las semanas se guarda como NULL."""
+    lista = sorted({int(w) for w in lista if 1 <= int(w) <= SEMANAS_DEFAULT})
+    if not lista or len(lista) == SEMANAS_DEFAULT:
+        return None
+    return ",".join(str(w) for w in lista)
+
+
+def fechas_para_item(dia_semana: int, semanas_texto=None):
+    """Igual que fechas_para_bloque, pero acotado a la primera y última semana elegidas."""
+    lista = parse_semanas(semanas_texto)
+    if not lista:
+        return fechas_para_bloque(dia_semana)
+    offset = timedelta(days=dia_semana - 1)
+    inicio = LUNES_INICIO_SEMESTRE + timedelta(weeks=lista[0] - 1) + offset
+    fin = LUNES_INICIO_SEMESTRE + timedelta(weeks=lista[-1]) + offset
+    return inicio, fin
+
+def sesiones_por_semana(asignatura):
+    horas = getattr(asignatura, "horas", None) or 4
+    return max(1, min(4, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
 
 # Color (hexadecimal) con el que nacen los bloques si nadie elige otro
 COLOR_DEFAULT = "#2563eb"
@@ -363,6 +435,17 @@ async def subir_disponibilidad_docente(
 
         profesores_bd = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
         bloques_bd = db.query(models.BloqueHorario).all()
+
+        ocupados = db.query(models.SinopticoItem.profesor_id).filter(
+            models.SinopticoItem.bloque_horario_id == int(bloque_horario_id),
+            models.SinopticoItem.profesor_id.isnot(None),
+        )
+        if excluir_item_id is not None:
+            ocupados = ocupados.filter(models.SinopticoItem.id != int(excluir_item_id))
+        ids_ocupados = [r[0] for r in ocupados.all()]
+        if ids_ocupados:
+            query = query.filter(~models.Profesor.id.in_(ids_ocupados))
+
 
         def _match_profesor(nombre_doc_raw):
             if not nombre_doc_raw or str(nombre_doc_raw).strip().lower() == 'nan':
@@ -1438,6 +1521,70 @@ def crear_usuario(
         raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email.")
     db.refresh(nuevo)
     return nuevo
+
+@app.get("/api/sinopticos/{sinoptico_id}/pdf")
+def exportar_sinoptico_pdf(
+    sinoptico_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Exporta el sinóptico a PDF con el formato del boletín de carga académica de Duoc UC."""
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
+    carrera = db.query(models.Carrera).filter(models.Carrera.id == sinoptico.carrera_id).first()
+    semestre = db.query(models.Semestre).filter(models.Semestre.id == sinoptico.semestre_id).first()
+
+    filas = (
+        db.query(models.SinopticoItem, models.Asignatura, models.Profesor, models.Sala, models.BloqueHorario)
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
+        .outerjoin(models.Sala, models.SinopticoItem.sala_id == models.Sala.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .filter(models.SinopticoItem.sinoptico_id == sinoptico_id)
+        .all()
+    )
+    items = []
+    for item, asignatura, profesor, sala, bloque in filas:
+        items.append({
+            "asignatura_id": asignatura.id,
+            "nombre": asignatura.nombre,
+            "codigo": asignatura.codigo,
+            "seccion": item.seccion,
+            "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else None,
+            "sala": sala.nombre if sala else None,
+            "dia_semana": bloque.dia_semana,
+            "hora_inicio": bloque.hora_inicio,
+            "hora_fin": bloque.hora_fin,
+            "semanas": parse_semanas(item.semanas),
+        })
+
+    # Filas de la grilla: los módulos de la jornada del sinóptico (todos si es mixta)
+    consulta_bloques = db.query(models.BloqueHorario.hora_inicio, models.BloqueHorario.hora_fin)
+    jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada)
+    if jornada_val != "mixta":
+        consulta_bloques = consulta_bloques.filter(models.BloqueHorario.jornada == sinoptico.jornada)
+    bloques_horas = [(a, b) for a, b in consulta_bloques.distinct().all()]
+
+    pdf = construir_pdf_sinoptico(
+        sinoptico_id=sinoptico.id,
+        carrera_nombre=carrera.nombre if carrera else "",
+        carrera_codigo=carrera.codigo if carrera else "",
+        jornada_nombre=jornada_val.capitalize(),
+        semestre_numero=semestre.numero if semestre else 1,
+        anio=semestre.anio if semestre else LUNES_INICIO_SEMESTRE.year,
+        items=items,
+        bloques_horas=bloques_horas,
+        lunes_inicio=LUNES_INICIO_SEMESTRE,
+        fecha_emision=datetime.now(ZoneInfo("America/Santiago")).date(),
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="sinoptico_{sinoptico.id}.pdf"'},
+    )
+
+
 
 
 @app.get("/api/admin/auditoria", response_model=List[schemas.LoginLogOut])
