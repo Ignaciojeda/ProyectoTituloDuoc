@@ -1,6 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Response
-from zoneinfo import ZoneInfo
-from pdf_sinoptico import construir_pdf_sinoptico
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File
 import io
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,11 +17,6 @@ from pydantic import BaseModel
 
 class ColorUpdateRequest(BaseModel):
     color: str
-
-
-class SemanasUpdateRequest(BaseModel):
-    # Números de semana (1..17) en que se dicta la asignatura. Lista con todas = todas las semanas.
-    semanas: List[int]
 
 from database import engine, get_db, Base
 import models
@@ -64,54 +57,21 @@ Base.metadata.create_all(bind=engine)
 
 # Palabras clave para sugerencias de área docente
 PALABRA_CLAVE_AREA = {
-    "informatica": ["programacion", "base de datos", "software", "sistemas", "desarrollo", "web", "informatica", "computacion"],
+    "informatica": ["programacion", "base de datos", "software", "sistemas", "desarrollo", "web"],
     "redes": ["redes", "telecomunicaciones", "cisco", "infraestructura"],
     "matematica": ["matematica", "algebra", "calculo", "estadistica"],
-    "administracion": ["administracion", "gestion", "comercio", "logistica", "marketing", "negocios", "recursos humanos"],
+    "administracion": ["administracion", "gestion", "comercio", "logistica", "marketing"],
     "contabilidad": ["contabilidad", "finanzas", "costos", "tributaria"],
     "ingles": ["ingles", "english"],
     "lenguaje": ["lenguaje", "comunicacion", "redaccion"],
-    "prevencion_riesgos": ["prevencion", "riesgos", "seguridad laboral", "higiene industrial"],
-    "trabajo_social": ["trabajo social", "social", "comunitari", "familia"],
-    "diseno_grafico": ["diseno", "grafico", "ilustracion", "tipografia", "multimedia"],
-    "turismo": ["turismo", "hoteleria", "turistic"],
-    "gastronomia": ["gastronomia", "cocina", "culinari", "pasteleria", "panaderia", "alimentos"],
-    "enfermeria": ["enfermeria", "clinic", "anatomia", "salud", "farmacologia"],
 }
 
 def area_para_asignatura(nombre_asignatura: str):
-    nombre = limpiar_texto(nombre_asignatura)
+    nombre = nombre_asignatura.lower()
     for area, palabras in PALABRA_CLAVE_AREA.items():
         if any(p in nombre for p in palabras):
             return area
     return None
-
-def areas_de_carrera(nombre_carrera: str, nombres_asignaturas):
-    """
-    Áreas docentes propias de una carrera. Se prioriza el nombre de la carrera
-    (ej. 'Administración y Negocios' -> administracion) y se suman solo las áreas
-    que aparecen en una parte relevante de sus asignaturas, para que un ramo suelto
-    (ej. 'Sistemas de información' en Administración) no marque a todo un área.
-    """
-    areas = set()
-    nombre_c = limpiar_texto(nombre_carrera)
-    for area, palabras in PALABRA_CLAVE_AREA.items():
-        if any(p in nombre_c for p in palabras):
-            areas.add(area)
-
-    conteo = defaultdict(int)
-    for n in nombres_asignaturas:
-        area = area_para_asignatura(n)
-        if area:
-            conteo[area] += 1
-    total = len(nombres_asignaturas) or 1
-    for area, cant in conteo.items():
-        if cant >= 2 and cant / total >= 0.15:
-            areas.add(area)
-
-    if not areas and conteo:
-        areas.add(max(conteo, key=conteo.get))
-    return areas
 
 LUNES_INICIO_SEMESTRE = date(2026, 8, 10)
 SEMANAS_DEFAULT = 17
@@ -128,44 +88,8 @@ def fechas_para_bloque(dia_semana: int, semanas: int = SEMANAS_DEFAULT):
     fin = inicio + timedelta(weeks=semanas)
     return inicio, fin
 
-def parse_semanas(valor):
-    """'1,3,5' -> [1,3,5]. None o vacío = todas las semanas (devuelve None)."""
-    if not valor:
-        return None
-    try:
-        lista = sorted({int(x) for x in str(valor).split(",") if x.strip()})
-    except ValueError:
-        return None
-    lista = [w for w in lista if 1 <= w <= SEMANAS_DEFAULT]
-    if not lista or len(lista) == SEMANAS_DEFAULT:
-        return None
-    return lista
-
-
-def serializar_semanas(lista):
-    """Lista de semanas -> texto para guardar; todas las semanas se guarda como NULL."""
-    lista = sorted({int(w) for w in lista if 1 <= int(w) <= SEMANAS_DEFAULT})
-    if not lista or len(lista) == SEMANAS_DEFAULT:
-        return None
-    return ",".join(str(w) for w in lista)
-
-
-def fechas_para_item(dia_semana: int, semanas_texto=None):
-    """Igual que fechas_para_bloque, pero acotado a la primera y última semana elegidas."""
-    lista = parse_semanas(semanas_texto)
-    if not lista:
-        return fechas_para_bloque(dia_semana)
-    offset = timedelta(days=dia_semana - 1)
-    inicio = LUNES_INICIO_SEMESTRE + timedelta(weeks=lista[0] - 1) + offset
-    fin = LUNES_INICIO_SEMESTRE + timedelta(weeks=lista[-1]) + offset
-    return inicio, fin
-
-def sesiones_por_semana(asignatura):
-    horas = getattr(asignatura, "horas", None) or 4
-    return max(1, min(4, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
-
 def tamanos_sesiones(asignatura):
-    """Módulos de cada sesión semanal. Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
+    """Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
     horas = getattr(asignatura, "horas", None) or 4
     horas = max(1, min(8, int(horas)))
     tamanos = [2] * (horas // 2)
@@ -336,7 +260,6 @@ def areas_docentes_carrera(
     la generación automática). El frontend usa esto para resaltar, en los
     selectores de profesor, a quienes pertenecen al área de la carrera.
     """
-    carrera = db.query(models.Carrera).filter(models.Carrera.id == carrera_id).first()
     asignaturas = db.query(models.Asignatura).join(
         models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
     ).filter(
@@ -344,7 +267,11 @@ def areas_docentes_carrera(
         models.Asignatura.activo == True,
     ).all()
 
-    areas = areas_de_carrera(carrera.nombre if carrera else "", [a.nombre for a in asignaturas])
+    areas = set()
+    for a in asignaturas:
+        area = area_para_asignatura(a.nombre)
+        if area:
+            areas.add(area)
 
     return {"areas": sorted(areas)}
 
@@ -378,6 +305,7 @@ def listar_asignaturas(
     return query.order_by(models.Asignatura.codigo).all()
 
 
+
 @app.post("/api/asignaturas", response_model=schemas.AsignaturaOut)
 def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     nueva = models.Asignatura(**datos.model_dump())
@@ -394,15 +322,12 @@ def crear_asignatura(datos: schemas.AsignaturaCreate, db: Session = Depends(get_
 @app.get("/api/profesores", response_model=List[schemas.ProfesorOut])
 def listar_profesores(
     bloque_horario_id: Optional[int] = Query(None),
-    excluir_item_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_docente)
 ):
     """
     Lista profesores activos.
-    Si recibe bloque_horario_id, devuelve SOLO los que están disponibles en ese
-    bloque y que además no tienen ya otra clase asignada en él (en cualquier sinóptico).
-    excluir_item_id: al editar una clase, esa misma clase no cuenta como "ocupado".
+    Si recibe bloque_horario_id en los Query Parameters, filtra estrictamente.
     """
     query = db.query(models.Profesor).filter(models.Profesor.activo == True)
 
@@ -414,16 +339,6 @@ def listar_profesores(
             models.DisponibilidadDocente.bloque_horario_id == int(bloque_horario_id),
             models.DisponibilidadDocente.disponible.is_(True)
         ).distinct()
-
-        ocupados = db.query(models.SinopticoItem.profesor_id).filter(
-            models.SinopticoItem.bloque_horario_id == int(bloque_horario_id),
-            models.SinopticoItem.profesor_id.isnot(None),
-        )
-        if excluir_item_id is not None:
-            ocupados = ocupados.filter(models.SinopticoItem.id != int(excluir_item_id))
-        ids_ocupados = [r[0] for r in ocupados.all()]
-        if ids_ocupados:
-            query = query.filter(~models.Profesor.id.in_(ids_ocupados))
 
     return query.order_by(models.Profesor.nombre).all()
 
@@ -449,12 +364,34 @@ async def subir_disponibilidad_docente(
         profesores_bd = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
         bloques_bd = db.query(models.BloqueHorario).all()
 
-        # Solo se reemplaza lo que vino de un Excel anterior; lo agregado a mano
-        # por el administrador (origen='manual') se conserva.
-        db.query(models.DisponibilidadDocente).filter(
-            models.DisponibilidadDocente.origen == "excel"
-        ).delete(synchronize_session=False)
-        db.commit()
+        def _match_profesor(nombre_doc_raw):
+            if not nombre_doc_raw or str(nombre_doc_raw).strip().lower() == 'nan':
+                return None
+            nombre_doc_clean = limpiar_texto(str(nombre_doc_raw).strip())
+            palabras_doc = set(nombre_doc_clean.split())
+            for p in profesores_bd:
+                nombre_bd_clean = limpiar_texto(f"{p.nombre} {p.apellido}")
+                palabras_bd = set(nombre_bd_clean.split())
+                if len(palabras_doc.intersection(palabras_bd)) >= 2:
+                    return p
+            return None
+
+        # Primero identificamos a qué profesores corresponde ESTE archivo.
+        profesores_en_archivo_ids = set()
+        for nombre_doc_raw in df['nombre_docente'].unique():
+            prof_match = _match_profesor(nombre_doc_raw)
+            if prof_match:
+                profesores_en_archivo_ids.add(prof_match.id)
+
+        # Solo se reemplaza lo que vino de un Excel anterior PARA LOS PROFESORES
+        # incluidos en este archivo; lo de otros profesores (cargado en subidas
+        # anteriores) y lo agregado a mano (origen='manual') se conserva.
+        if profesores_en_archivo_ids:
+            db.query(models.DisponibilidadDocente).filter(
+                models.DisponibilidadDocente.origen == "excel",
+                models.DisponibilidadDocente.profesor_id.in_(profesores_en_archivo_ids),
+            ).delete(synchronize_session=False)
+            db.commit()
 
         ya_registrados = {
             (d.profesor_id, d.bloque_horario_id)
@@ -468,18 +405,7 @@ async def subir_disponibilidad_docente(
             if not nombre_doc_raw or nombre_doc_raw.lower() == 'nan':
                 continue
 
-            nombre_doc_clean = limpiar_texto(nombre_doc_raw)
-
-            # Match de Profesor por palabras clave principales
-            prof = None
-            for p in profesores_bd:
-                nombre_bd_clean = limpiar_texto(f"{p.nombre} {p.apellido}")
-                palabras_doc = set(nombre_doc_clean.split())
-                palabras_bd = set(nombre_bd_clean.split())
-
-                if len(palabras_doc.intersection(palabras_bd)) >= 2:
-                    prof = p
-                    break
+            prof = _match_profesor(nombre_doc_raw)
 
             if not prof:
                 continue
@@ -688,7 +614,6 @@ def mi_horario_docente(
                 "seccion": item.seccion,
                 "sinoptico_id": item.sinoptico_id,
                 "color": item.color,
-                "semanas": parse_semanas(item.semanas),
             },
         })
 
@@ -834,6 +759,10 @@ def generar_sinoptico(
         query_asig = query_asig.filter(models.Asignatura.nivel_semestral == nivel_semestral)
     asignaturas = query_asig.all()
 
+    plan_estudio_id = getattr(datos, "plan_estudio_id", None)
+    if plan_estudio_id:
+        query_asig = query_asig.filter(models.Asignatura.plan_estudio_id == plan_estudio_id)
+
     if not asignaturas:
         raise HTTPException(
             status_code=404,
@@ -906,7 +835,7 @@ def generar_sinoptico(
 
     ranuras = ranuras_con_ventanas(bloques)
     todas_las_sesiones = pares_consecutivos(bloques)
-    todos_los_simples = [(b,) for b in sorted(bloques, key=lambda b: (b.dia_semana, b.hora_inicio))]
+    todas_simples = [(b,) for b in bloques if b.dia_semana in DIAS_CLASES]
 
     def asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala):
         ids = [b.id for b in sesion]
@@ -963,11 +892,10 @@ def generar_sinoptico(
 
         for tam in tamanos_sesiones(asignatura):
             if tam == 1:
-                # sesión de 1 módulo (cuando las horas son impares): cualquier bloque libre
-                libres = [x for x in todos_los_simples if x[0].dia_semana in DIAS_CLASES and x[0].id not in bloques_usados]
-                libres.sort(key=lambda x: (x[0].dia_semana in dias_del_ramo, carga_dia[x[0].dia_semana]))
-                respaldo = [x for x in todos_los_simples if x[0].id not in bloques_usados]
-                respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
+                libres = [x for x in todas_simples if x[0].id not in bloques_usados]
+                random.shuffle(libres)
+                libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)
+                respaldo = []
             else:
                 libres = [x for x in ranuras if not any(b.id in bloques_usados for b in x)]
                 libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)  # días distintos primero
@@ -1016,7 +944,6 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
     return [
         {
             "id": sinoptico.id,
-            "carrera_id": carrera.id,
             "carrera": carrera.nombre,
             "codigo_carrera": carrera.codigo,
             "semestre": f"{semestre.anio}-{semestre.numero}",
@@ -1067,7 +994,6 @@ def eventos_todos_los_sinopticos(db: Session = Depends(get_db), _: models.Usuari
                 "jornada_id": item.jornada_id,
                 "capacidad_inicial": item.capacidad_inicial,
                 "color": item.color,
-                "semanas": parse_semanas(item.semanas),
             }
         })
 
@@ -1115,73 +1041,9 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
                 "jornada_id": item.jornada_id,
                 "capacidad_inicial": item.capacidad_inicial,
                 "color": item.color,
-                "semanas": parse_semanas(item.semanas),
             }
         })
     return eventos
-
-
-@app.get("/api/sinopticos/{sinoptico_id}/pdf")
-def exportar_sinoptico_pdf(
-    sinoptico_id: int,
-    db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
-):
-    """Exporta el sinóptico a PDF con el formato del boletín de carga académica de Duoc UC."""
-    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
-    if not sinoptico:
-        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
-    carrera = db.query(models.Carrera).filter(models.Carrera.id == sinoptico.carrera_id).first()
-    semestre = db.query(models.Semestre).filter(models.Semestre.id == sinoptico.semestre_id).first()
-
-    filas = (
-        db.query(models.SinopticoItem, models.Asignatura, models.Profesor, models.Sala, models.BloqueHorario)
-        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
-        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
-        .outerjoin(models.Sala, models.SinopticoItem.sala_id == models.Sala.id)
-        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
-        .filter(models.SinopticoItem.sinoptico_id == sinoptico_id)
-        .all()
-    )
-    items = []
-    for item, asignatura, profesor, sala, bloque in filas:
-        items.append({
-            "asignatura_id": asignatura.id,
-            "nombre": asignatura.nombre,
-            "codigo": asignatura.codigo,
-            "seccion": item.seccion,
-            "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else None,
-            "sala": sala.nombre if sala else None,
-            "dia_semana": bloque.dia_semana,
-            "hora_inicio": bloque.hora_inicio,
-            "hora_fin": bloque.hora_fin,
-            "semanas": parse_semanas(item.semanas),
-        })
-
-    # Filas de la grilla: los módulos de la jornada del sinóptico (todos si es mixta)
-    consulta_bloques = db.query(models.BloqueHorario.hora_inicio, models.BloqueHorario.hora_fin)
-    jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada)
-    if jornada_val != "mixta":
-        consulta_bloques = consulta_bloques.filter(models.BloqueHorario.jornada == sinoptico.jornada)
-    bloques_horas = [(a, b) for a, b in consulta_bloques.distinct().all()]
-
-    pdf = construir_pdf_sinoptico(
-        sinoptico_id=sinoptico.id,
-        carrera_nombre=carrera.nombre if carrera else "",
-        carrera_codigo=carrera.codigo if carrera else "",
-        jornada_nombre=jornada_val.capitalize(),
-        semestre_numero=semestre.numero if semestre else 1,
-        anio=semestre.anio if semestre else LUNES_INICIO_SEMESTRE.year,
-        items=items,
-        bloques_horas=bloques_horas,
-        lunes_inicio=LUNES_INICIO_SEMESTRE,
-        fecha_emision=datetime.now(ZoneInfo("America/Santiago")).date(),
-    )
-    return Response(
-        content=pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="sinoptico_{sinoptico.id}.pdf"'},
-    )
 
 
 @app.get("/api/salas/eventos")
@@ -1224,7 +1086,6 @@ def eventos_todas_las_salas(db: Session = Depends(get_db), _: models.Usuario = D
                 "semestre": f"{semestre.anio}-{semestre.numero}",
                 "sinoptico_id": sinoptico.id,
                 "color": item.color,
-                "semanas": parse_semanas(item.semanas),
             }
         })
 
@@ -1271,7 +1132,6 @@ def eventos_sala(sala_id: int, db: Session = Depends(get_db), _: models.Usuario 
                 "semestre": f"{semestre.anio}-{semestre.numero}",
                 "sinoptico_id": sinoptico.id,
                 "color": item.color,
-                "semanas": parse_semanas(item.semanas),
             }
         })
     return eventos
@@ -1294,13 +1154,7 @@ def agregar_item_sinoptico(
     bloque = db.query(models.BloqueHorario).filter(models.BloqueHorario.id == datos.bloque_horario_id).first()
     if not bloque:
         raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
-    # Si la asignatura ya tiene semanas elegidas en este sinóptico, el bloque nuevo las hereda
-    hermano = db.query(models.SinopticoItem).filter(
-        models.SinopticoItem.sinoptico_id == datos.sinoptico_id,
-        models.SinopticoItem.asignatura_id == datos.asignatura_id,
-    ).first()
-    semanas_heredadas = hermano.semanas if hermano else None
-    inicio, fin = fechas_para_item(bloque.dia_semana, semanas_heredadas)
+    inicio, fin = fechas_para_bloque(bloque.dia_semana)
 
     # Validar choque de profesor SOLO si se especificó uno
     if datos.profesor_id is not None:
@@ -1338,7 +1192,6 @@ def agregar_item_sinoptico(
         fecha_final=fin,
         jornada_id=obtener_jornada_id(db, jornada_para_item),
         color=datos.color or COLOR_DEFAULT,
-        semanas=semanas_heredadas,
     )
     db.add(nuevo_item)
     try:
@@ -1408,7 +1261,7 @@ def editar_item_sinoptico(
     item.capacidad_inicial = datos.capacidad_inicial
     if datos.color:
         item.color = datos.color
-    item.fecha_inicio, item.fecha_final = fechas_para_item(bloque.dia_semana, item.semanas)
+    item.fecha_inicio, item.fecha_final = fechas_para_bloque(bloque.dia_semana)
 
     try:
         db.commit()
@@ -1480,7 +1333,7 @@ def mover_item_sinoptico(
                 detail="La sala de esta clase ya está ocupada por otra clase en ese horario."
             )
 
-    item.fecha_inicio, item.fecha_final = fechas_para_item(nuevo_bloque.dia_semana, item.semanas)
+    item.fecha_inicio, item.fecha_final = fechas_para_bloque(nuevo_bloque.dia_semana)
     item.bloque_horario_id = nuevo_bloque.id
     if sinoptico_jornada_val == "mixta":
         item.jornada_id = obtener_jornada_id(db, nuevo_bloque.jornada)
@@ -1525,46 +1378,6 @@ def actualizar_color_asignatura(
         raise HTTPException(status_code=409, detail="No se pudo actualizar el color de la asignatura.")
 
     return {"ok": True, "actualizados": len(items)}
-
-
-@app.patch("/api/sinopticos/{sinoptico_id}/asignaturas/{asignatura_id}/semanas")
-def actualizar_semanas_asignatura(
-    sinoptico_id: int,
-    asignatura_id: int,
-    datos: SemanasUpdateRequest,
-    db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
-):
-    """
-    Define en qué semanas (1..17) se dicta una asignatura dentro de un sinóptico
-    (semanal, semana por medio, mensual, o las que se marquen a mano). Se aplica
-    a TODOS los bloques de la asignatura en ese sinóptico.
-    """
-    validas = sorted({w for w in datos.semanas if 1 <= w <= SEMANAS_DEFAULT})
-    if not validas:
-        raise HTTPException(status_code=400, detail="Debes marcar al menos una semana.")
-
-    items = db.query(models.SinopticoItem).filter(
-        models.SinopticoItem.sinoptico_id == sinoptico_id,
-        models.SinopticoItem.asignatura_id == asignatura_id,
-    ).all()
-    if not items:
-        raise HTTPException(status_code=404, detail="No hay bloques de esa asignatura en este sinóptico.")
-
-    texto = serializar_semanas(validas)
-    for item in items:
-        item.semanas = texto
-        bloque = db.query(models.BloqueHorario).filter(models.BloqueHorario.id == item.bloque_horario_id).first()
-        if bloque:
-            item.fecha_inicio, item.fecha_final = fechas_para_item(bloque.dia_semana, texto)
-
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="No se pudieron actualizar las semanas.")
-
-    return {"ok": True, "actualizados": len(items), "semanas": parse_semanas(texto) or list(range(1, SEMANAS_DEFAULT + 1))}
 
 
 @app.delete("/api/sinopticos/items/{item_id}", status_code=204)
