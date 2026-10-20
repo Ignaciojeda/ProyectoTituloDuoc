@@ -591,9 +591,50 @@ def disponibilidad_profesor(
     }
 
 
+MEDIOS_ACUERDO = {
+    "llamada": "Llamada telefónica",
+    "correo": "Correo electrónico",
+    "presencial": "Reunión presencial",
+    "mensaje": "Mensaje (WhatsApp / chat)",
+    "solicitud_docente": "Solicitud del docente (portal)",
+    "otro": "Otro",
+}
+NOMBRES_DIA = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves", 5: "Viernes", 6: "Sábado", 7: "Domingo"}
+
+
+def registrar_cambio(
+    db: Session, usuario: models.Usuario, accion: str, entidad: str, detalle: str,
+    sinoptico_id: Optional[int] = None, profesor_id: Optional[int] = None,
+    medio: Optional[str] = None, motivo: Optional[str] = None,
+):
+    """Agrega una línea a la bitácora. NO hace commit: se confirma con el del endpoint."""
+    db.add(models.RegistroCambio(
+        usuario_id=usuario.id,
+        usuario_nombre=f"{usuario.nombre} ({usuario.email})",
+        accion=accion, entidad=entidad, detalle=detalle[:500],
+        sinoptico_id=sinoptico_id, profesor_id=profesor_id,
+        medio=medio, motivo=(motivo or None),
+    ))
+
+
+def describir_bloque(db: Session, bloque_id: int) -> str:
+    b = db.query(models.BloqueHorario).filter(models.BloqueHorario.id == bloque_id).first()
+    if not b:
+        return f"bloque {bloque_id}"
+    return f"{NOMBRES_DIA.get(b.dia_semana, b.dia_semana)} {str(b.hora_inicio)[:5]}"
+
+
+def nombre_asignatura(db: Session, asignatura_id: int) -> str:
+    a = db.query(models.Asignatura).filter(models.Asignatura.id == asignatura_id).first()
+    return a.nombre if a else f"asignatura {asignatura_id}"
+
+
 class DisponibilidadManualRequest(BaseModel):
     bloque_horario_ids: List[int]
     disponible: bool
+    medio: str                 # llamada | correo | presencial | mensaje | solicitud_docente | otro
+    motivo: str                # por qué se hace el cambio / cómo se llegó al acuerdo
+    # Compatibilidad: sin medio/motivo la petición se rechaza con 422
 
 
 @app.put("/api/profesores/{profesor_id}/disponibilidad")
@@ -601,7 +642,7 @@ def fijar_disponibilidad_manual(
     profesor_id: int,
     datos: DisponibilidadManualRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     """
     Marca (disponible=true) o desmarca (disponible=false) uno o varios bloques
@@ -612,6 +653,12 @@ def fijar_disponibilidad_manual(
     profesor = db.query(models.Profesor).filter(models.Profesor.id == profesor_id).first()
     if not profesor:
         raise HTTPException(status_code=404, detail="El profesor indicado no existe.")
+
+    if datos.medio not in MEDIOS_ACUERDO:
+        raise HTTPException(status_code=400, detail="Debes elegir cómo se acordó el cambio (llamada, correo, etc.).")
+    motivo = (datos.motivo or "").strip()
+    if len(motivo) < 3:
+        raise HTTPException(status_code=400, detail="Debes indicar el motivo del cambio.")
 
     ids = set(datos.bloque_horario_ids)
     if not ids:
@@ -648,6 +695,16 @@ def fijar_disponibilidad_manual(
             models.DisponibilidadDocente.bloque_horario_id.in_(ids),
         ).delete(synchronize_session=False)
 
+    nombres_bloques = ", ".join(describir_bloque(db, i) for i in sorted(ids)[:8])
+    if len(ids) > 8:
+        nombres_bloques += f" y {len(ids) - 8} más"
+    registrar_cambio(
+        db, usuario,
+        accion="disponibilidad_agregada" if datos.disponible else "disponibilidad_quitada",
+        entidad="disponibilidad",
+        detalle=f"{'Agregó' if datos.disponible else 'Quitó'} disponibilidad de {profesor.nombre} {profesor.apellido}: {nombres_bloques}",
+        profesor_id=profesor_id, medio=datos.medio, motivo=motivo,
+    )
     db.commit()
     return {"ok": True, "cambiados": len(ids)}
 
@@ -668,6 +725,22 @@ def _profesor_del_usuario(db: Session, usuario: models.Usuario):
         if score >= 2 and score > mejor_score:
             mejor, mejor_score = p, score
     return mejor
+
+
+@app.get("/api/docente/mis-cambios")
+def mis_cambios_docente(
+    limite: int = 100,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(require_docente),
+):
+    """Cambios hechos por coordinación sobre la disponibilidad y las clases del profesor logeado."""
+    profesor = _profesor_del_usuario(db, usuario)
+    if not profesor:
+        return []
+    filas = db.query(models.RegistroCambio).filter(
+        models.RegistroCambio.profesor_id == profesor.id
+    ).order_by(models.RegistroCambio.creado_en.desc(), models.RegistroCambio.id.desc()).limit(limite).all()
+    return [_registro_a_dict(r) for r in filas]
 
 
 @app.get("/api/docente/mi-horario")
@@ -814,7 +887,7 @@ def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = De
 def crear_sinoptico_vacio(
     datos: schemas.GenerarSinopticoRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     """
     Crea un sinóptico vacío (sin generar automáticamente ninguna clase), para
@@ -832,6 +905,8 @@ def crear_sinoptico_vacio(
         db.rollback()
         raise HTTPException(status_code=409, detail="Ya existe un sinóptico con esa carrera/semestre/jornada.")
     db.refresh(nuevo)
+    registrar_cambio(db, usuario, "sinoptico_creado", "sinoptico", "Creó el sinóptico vacío", sinoptico_id=nuevo.id)
+    db.commit()
     return {"sinoptico_id": nuevo.id, "asignaturas_sin_asignar": []}
 
 
@@ -839,7 +914,7 @@ def crear_sinoptico_vacio(
 def generar_sinoptico(
     datos: schemas.GenerarSinopticoRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador)
+    usuario: models.Usuario = Depends(require_coordinador)
 ):
     """Generación automática asignando bloques respetando la disponibilidad docente sin choques horarios."""
 
@@ -1013,6 +1088,9 @@ def generar_sinoptico(
     try:
         db.commit()
         db.refresh(nuevo_sinoptico)
+        registrar_cambio(db, usuario, "sinoptico_generado", "sinoptico",
+                         "Generó el sinóptico automáticamente", sinoptico_id=nuevo_sinoptico.id)
+        db.commit()
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -1412,7 +1490,7 @@ def eventos_sala(sala_id: int, db: Session = Depends(get_db), _: models.Usuario 
 def agregar_item_sinoptico(
     datos: schemas.SinopticoItemCreate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
     if not sinoptico:
@@ -1479,6 +1557,12 @@ def agregar_item_sinoptico(
         raise HTTPException(status_code=409, detail="Error de restricción al guardar el ramo.")
 
     db.refresh(nuevo_item)
+    registrar_cambio(
+        db, usuario, "bloque_agregado", "sinoptico",
+        f"Agregó {nombre_asignatura(db, nuevo_item.asignatura_id)} en {describir_bloque(db, nuevo_item.bloque_horario_id)}",
+        sinoptico_id=nuevo_item.sinoptico_id, profesor_id=nuevo_item.profesor_id,
+    )
+    db.commit()
     return nuevo_item
 
 
@@ -1487,7 +1571,7 @@ def editar_item_sinoptico(
     item_id: int,
     datos: schemas.SinopticoItemUpdate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
@@ -1550,6 +1634,12 @@ def editar_item_sinoptico(
             detail="Error al guardar el evento por choque de restricciones."
         )
     db.refresh(item)
+    registrar_cambio(
+        db, usuario, "bloque_editado", "sinoptico",
+        f"Editó {nombre_asignatura(db, item.asignatura_id)} en {describir_bloque(db, item.bloque_horario_id)}",
+        sinoptico_id=item.sinoptico_id, profesor_id=item.profesor_id,
+    )
+    db.commit()
     return item
 
 
@@ -1558,7 +1648,7 @@ def mover_item_sinoptico(
     item_id: int,
     datos: schemas.MoverItemRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
@@ -1611,6 +1701,7 @@ def mover_item_sinoptico(
                 detail="La sala de esta clase ya está ocupada por otra clase en ese horario."
             )
 
+    bloque_anterior = describir_bloque(db, item.bloque_horario_id)
     item.fecha_inicio, item.fecha_final = fechas_para_item(nuevo_bloque.dia_semana, item.semanas)
     item.bloque_horario_id = nuevo_bloque.id
     if sinoptico_jornada_val == "mixta":
@@ -1624,6 +1715,12 @@ def mover_item_sinoptico(
             detail="Choque detectado al mover el bloque. Revisa la asignación de la sala o profesor."
         )
     db.refresh(item)
+    registrar_cambio(
+        db, usuario, "bloque_movido", "sinoptico",
+        f"Movió {nombre_asignatura(db, item.asignatura_id)} de {bloque_anterior} a {describir_bloque(db, nuevo_bloque.id)}",
+        sinoptico_id=item.sinoptico_id, profesor_id=item.profesor_id,
+    )
+    db.commit()
     return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
 
 
@@ -1633,7 +1730,7 @@ def actualizar_color_asignatura(
     asignatura_id: int,
     datos: ColorUpdateRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     """
     Iguala el color de TODOS los bloques de una asignatura dentro de un mismo
@@ -1655,6 +1752,9 @@ def actualizar_color_asignatura(
         db.rollback()
         raise HTTPException(status_code=409, detail="No se pudo actualizar el color de la asignatura.")
 
+    registrar_cambio(db, usuario, "color_cambiado", "sinoptico",
+                     f"Cambió el color de {nombre_asignatura(db, asignatura_id)}", sinoptico_id=sinoptico_id)
+    db.commit()
     return {"ok": True, "actualizados": len(items)}
 
 
@@ -1664,7 +1764,7 @@ def actualizar_semanas_asignatura(
     asignatura_id: int,
     datos: SemanasUpdateRequest,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     """
     Define en qué semanas (1..17) se dicta una asignatura dentro de un sinóptico
@@ -1695,6 +1795,9 @@ def actualizar_semanas_asignatura(
         db.rollback()
         raise HTTPException(status_code=409, detail="No se pudieron actualizar las semanas.")
 
+    registrar_cambio(db, usuario, "semanas_cambiadas", "sinoptico",
+                     f"Cambió las semanas de {nombre_asignatura(db, asignatura_id)}: {texto}", sinoptico_id=sinoptico_id)
+    db.commit()
     return {"ok": True, "actualizados": len(items), "semanas": parse_semanas(texto) or list(range(1, SEMANAS_DEFAULT + 1))}
 
 
@@ -1702,11 +1805,16 @@ def actualizar_semanas_asignatura(
 def eliminar_item_sinoptico(
     item_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
+    registrar_cambio(
+        db, usuario, "bloque_eliminado", "sinoptico",
+        f"Eliminó {nombre_asignatura(db, item.asignatura_id)} de {describir_bloque(db, item.bloque_horario_id)}",
+        sinoptico_id=item.sinoptico_id, profesor_id=item.profesor_id,
+    )
     db.delete(item)
     db.commit()
     return None
@@ -1716,14 +1824,76 @@ def eliminar_item_sinoptico(
 def eliminar_sinoptico(
     sinoptico_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_coordinador),
+    usuario: models.Usuario = Depends(require_coordinador),
 ):
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    registrar_cambio(db, usuario, "sinoptico_eliminado", "sinoptico",
+                     "Eliminó el sinóptico completo", sinoptico_id=sinoptico_id)
     db.delete(sinoptico)
     db.commit()
     return None
+
+
+# ---------------------------------------------------------------------------
+# BITÁCORA DE CAMBIOS (quién modificó qué, cuándo y por qué)
+# ---------------------------------------------------------------------------
+def _registro_a_dict(r: "models.RegistroCambio") -> dict:
+    return {
+        "id": r.id,
+        "fecha": r.creado_en.isoformat() if r.creado_en else None,
+        "usuario": r.usuario_nombre,
+        "accion": r.accion,
+        "entidad": r.entidad,
+        "detalle": r.detalle,
+        "sinoptico_id": r.sinoptico_id,
+        "profesor_id": r.profesor_id,
+        "medio": r.medio,
+        "medio_texto": MEDIOS_ACUERDO.get(r.medio) if r.medio else None,
+        "motivo": r.motivo,
+    }
+
+
+@app.get("/api/sinopticos/{sinoptico_id}/historial")
+def historial_sinoptico(
+    sinoptico_id: int,
+    limite: int = 200,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Quién modificó este sinóptico, qué hizo y cuándo (más reciente primero)."""
+    filas = db.query(models.RegistroCambio).filter(
+        models.RegistroCambio.sinoptico_id == sinoptico_id
+    ).order_by(models.RegistroCambio.creado_en.desc(), models.RegistroCambio.id.desc()).limit(limite).all()
+    return [_registro_a_dict(r) for r in filas]
+
+
+@app.get("/api/profesores/{profesor_id}/historial")
+def historial_disponibilidad_profesor(
+    profesor_id: int,
+    limite: int = 200,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Cambios de disponibilidad de un profesor con su motivo y medio de acuerdo."""
+    filas = db.query(models.RegistroCambio).filter(
+        models.RegistroCambio.profesor_id == profesor_id,
+        models.RegistroCambio.entidad == "disponibilidad",
+    ).order_by(models.RegistroCambio.creado_en.desc(), models.RegistroCambio.id.desc()).limit(limite).all()
+    return [_registro_a_dict(r) for r in filas]
+
+
+@app.get("/api/admin/bitacora")
+def bitacora_general(
+    limite: int = 300,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_admin),
+):
+    filas = db.query(models.RegistroCambio).order_by(
+        models.RegistroCambio.creado_en.desc(), models.RegistroCambio.id.desc()
+    ).limit(limite).all()
+    return [_registro_a_dict(r) for r in filas]
 
 
 # ===========================================================================

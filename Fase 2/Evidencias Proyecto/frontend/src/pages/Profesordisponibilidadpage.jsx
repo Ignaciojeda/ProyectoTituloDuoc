@@ -26,6 +26,11 @@ export default function ProfesorDisponibilidadPage() {
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' })
   // Cambio pendiente de confirmar: { ids: [...], disponible: true|false, descripcion }
   const [pendiente, setPendiente] = useState(null)
+  // Cómo se acordó el cambio y por qué (queda en la bitácora)
+  const [medio, setMedio] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [historial, setHistorial] = useState([])
+  const [errorForm, setErrorForm] = useState('')
 
   useEffect(() => {
     const init = async () => {
@@ -45,6 +50,15 @@ export default function ProfesorDisponibilidadPage() {
     init()
   }, [])
 
+  const cargarHistorial = async (id) => {
+    try {
+      const { data } = await api.get(`/profesores/${id}/historial`)
+      setHistorial(data)
+    } catch (err) {
+      setHistorial([])
+    }
+  }
+
   const cargarProfesor = async (id) => {
     setProfId(id)
     setMensaje({ tipo: '', texto: '' })
@@ -55,6 +69,7 @@ export default function ProfesorDisponibilidadPage() {
       const { data } = await api.get(`/profesores/${id}/disponibilidad`)
       setDisponibles(new Set(data.bloques_disponibles))
       setOcupados(new Set(data.bloques_ocupados))
+      cargarHistorial(id)
     } catch (err) {
       setMensaje({ tipo: 'error', texto: err.response?.data?.detail || 'Error al cargar la disponibilidad.' })
     } finally {
@@ -81,6 +96,7 @@ export default function ProfesorDisponibilidadPage() {
   const pedirConfirmacionCelda = (b) => {
     if (!profId || guardando) return
     const esDisp = disponibles.has(b.id)
+    setErrorForm('')
     setPendiente({
       ids: [b.id],
       disponible: !esDisp,
@@ -94,6 +110,7 @@ export default function ProfesorDisponibilidadPage() {
     if (!profId || guardando || !ids.length) return
     const todos = ids.every(i => disponibles.has(i))
     const afectados = todos ? ids : ids.filter(i => !disponibles.has(i))
+    setErrorForm('')
     setPendiente({
       ids: afectados,
       disponible: !todos,
@@ -107,17 +124,23 @@ export default function ProfesorDisponibilidadPage() {
 
   const confirmar = async () => {
     if (!pendiente) return
+    if (!medio) { setErrorForm('Elige cómo se acordó el cambio.'); return }
+    if (motivo.trim().length < 3) { setErrorForm('Escribe el motivo del cambio.'); return }
+    setErrorForm('')
     const { ids, disponible } = pendiente
     setGuardando(true)
     setMensaje({ tipo: '', texto: '' })
     try {
-      await api.put(`/profesores/${profId}/disponibilidad`, { bloque_horario_ids: ids, disponible })
+      await api.put(`/profesores/${profId}/disponibilidad`, { bloque_horario_ids: ids, disponible, medio, motivo: motivo.trim() })
       const nuevo = new Set(disponibles)
       ids.forEach(i => (disponible ? nuevo.add(i) : nuevo.delete(i)))
       setDisponibles(nuevo)
       setResumen(r => ({ ...r, [String(profId)]: nuevo.size }))
       setMensaje({ tipo: 'ok', texto: disponible ? 'Bloque agregado y guardado.' : 'Bloque quitado y guardado.' })
       setPendiente(null)
+      setMedio('')
+      setMotivo('')
+      cargarHistorial(profId)
     } catch (err) {
       setMensaje({ tipo: 'error', texto: err.response?.data?.detail || 'Error al guardar el cambio.' })
       setPendiente(null)
@@ -240,6 +263,27 @@ export default function ProfesorDisponibilidadPage() {
             </div>
           )}
 
+          {profActual && (
+            <div className="duoc-card" style={{ padding: '12px', marginTop: '14px' }}>
+              <h4 style={{ margin: '0 0 8px', color: 'var(--duoc-navy)', fontSize: '14px' }}>
+                Historial de cambios de disponibilidad
+              </h4>
+              {historial.length === 0 && (
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>Aún no hay cambios registrados para este profesor.</p>
+              )}
+              {historial.map(h => (
+                <div key={h.id} style={{ borderTop: '1px solid #eef1f5', padding: '8px 0', fontSize: '12px' }}>
+                  <div style={{ color: 'var(--text-muted)' }}>
+                    {h.fecha ? new Date(h.fecha + (h.fecha.endsWith('Z') ? '' : 'Z')).toLocaleString('es-CL') : ''} · {h.usuario}
+                  </div>
+                  <div style={{ fontWeight: 'bold' }}>{h.detalle}</div>
+                  {h.medio_texto && <div>📌 Acordado por: <strong>{h.medio_texto}</strong></div>}
+                  {h.motivo && <div>Motivo: {h.motivo}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
           {mensaje.texto && (
             <p style={{ marginTop: '10px', fontSize: '13px', color: mensaje.tipo === 'ok' ? '#15803d' : '#b91c1c' }}>
               {mensaje.texto}
@@ -268,6 +312,36 @@ export default function ProfesorDisponibilidadPage() {
                 Ojo: el profesor ya tiene clase asignada en este horario. Quitar su disponibilidad no modifica los sinópticos existentes.
               </p>
             )}
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', margin: '12px 0 4px' }}>
+              ¿Cómo se acordó este cambio? *
+            </label>
+            <select
+              value={medio}
+              onChange={e => setMedio(e.target.value)}
+              style={{ width: '100%', padding: '7px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+            >
+              <option value="">— Selecciona una opción —</option>
+              <option value="llamada">Llamada telefónica</option>
+              <option value="correo">Correo electrónico</option>
+              <option value="presencial">Reunión presencial</option>
+              <option value="mensaje">Mensaje (WhatsApp / chat)</option>
+              <option value="solicitud_docente">Solicitud del docente (portal)</option>
+              <option value="otro">Otro</option>
+            </select>
+
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', margin: '10px 0 4px' }}>
+              Motivo / detalle del acuerdo *
+            </label>
+            <textarea
+              value={motivo}
+              onChange={e => setMotivo(e.target.value)}
+              rows={3}
+              maxLength={450}
+              placeholder="Ej: El profesor avisó por correo que desde este mes puede los martes en la tarde."
+              style={{ width: '100%', boxSizing: 'border-box', padding: '7px', fontSize: '13px', border: '1px solid #cbd5e1', borderRadius: '6px', resize: 'vertical' }}
+            />
+            {errorForm && <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#b91c1c' }}>{errorForm}</p>}
+
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
               <button
                 onClick={() => setPendiente(null)}

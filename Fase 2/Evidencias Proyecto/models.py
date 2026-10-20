@@ -205,6 +205,22 @@ class LoginLog(Base):
     creado_en = Column(DateTime, server_default=func.now())
 
 
+class RegistroCambio(Base):
+    __tablename__ = "registro_cambio"
+
+    id = Column(Integer, primary_key=True)
+    usuario_id = Column(Integer, ForeignKey("usuario.id", ondelete="SET NULL"), nullable=True)
+    usuario_nombre = Column(String(260), nullable=False)
+    accion = Column(String(40), nullable=False)
+    entidad = Column(String(20), nullable=False)
+    detalle = Column(String(500), nullable=False)
+    sinoptico_id = Column(Integer, nullable=True)
+    profesor_id = Column(Integer, nullable=True)
+    medio = Column(String(20), nullable=True)
+    motivo = Column(String(500), nullable=True)
+    creado_en = Column(DateTime, server_default=func.now())
+
+
 class Usuario(Base):
     __tablename__ = "usuario"
 

@@ -285,6 +285,25 @@ export default function SinopticoPage() {
     }
   }
 
+  const [verHistorial, setVerHistorial] = useState(false)
+  const [historial, setHistorial] = useState([])
+  const [cargandoHistorial, setCargandoHistorial] = useState(false)
+
+  const abrirHistorial = async () => {
+    if (!sinopticoSel) return
+    setVerHistorial(true)
+    setCargandoHistorial(true)
+    try {
+      const { data } = await api.get(`/sinopticos/${sinopticoSel}/historial`)
+      setHistorial(data)
+    } catch (err) {
+      console.error('No se pudo cargar el historial:', err)
+      setHistorial([])
+    } finally {
+      setCargandoHistorial(false)
+    }
+  }
+
   const handleExportarPdf = async () => {
     if (!sinopticoSel) {
       setMensaje('Primero seleccione un sinóptico de la lista.')
@@ -709,6 +728,15 @@ export default function SinopticoPage() {
                 style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%', opacity: sinopticoSel ? 1 : 0.6, cursor: sinopticoSel ? 'pointer' : 'not-allowed' }}
               >
                 Exportar PDF
+              </button>
+
+              <button
+                onClick={abrirHistorial}
+                disabled={!sinopticoSel}
+                className="duoc-btn-accent"
+                style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%', opacity: sinopticoSel ? 1 : 0.6, cursor: sinopticoSel ? 'pointer' : 'not-allowed' }}
+              >
+                Historial de cambios
               </button>
 
               <button
@@ -1209,6 +1237,34 @@ export default function SinopticoPage() {
                 }}
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {verHistorial && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setVerHistorial(false)}
+        >
+          <div className="duoc-card" style={{ width: '560px', maxWidth: '92vw', maxHeight: '80vh', overflowY: 'auto', padding: '18px' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 10px', color: 'var(--duoc-navy)', fontSize: '17px' }}>Historial de cambios del sinóptico</h3>
+            {cargandoHistorial && <p>Cargando...</p>}
+            {!cargandoHistorial && historial.length === 0 && (
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Todavía no hay cambios registrados (solo se registran los hechos desde esta versión).</p>
+            )}
+            {historial.map(h => (
+              <div key={h.id} style={{ borderTop: '1px solid #eef1f5', padding: '8px 0', fontSize: '12px' }}>
+                <div style={{ color: 'var(--text-muted)' }}>
+                  {h.fecha ? new Date(h.fecha + (h.fecha.endsWith('Z') ? '' : 'Z')).toLocaleString('es-CL') : ''} · <strong>{h.usuario}</strong>
+                </div>
+                <div>{h.detalle}</div>
+              </div>
+            ))}
+            <div style={{ textAlign: 'right', marginTop: '12px' }}>
+              <button onClick={() => setVerHistorial(false)} style={{ padding: '7px 14px', fontSize: '13px', cursor: 'pointer', border: '1px solid #cbd5e1', background: '#fff', borderRadius: '6px' }}>
+                Cerrar
               </button>
             </div>
           </div>
