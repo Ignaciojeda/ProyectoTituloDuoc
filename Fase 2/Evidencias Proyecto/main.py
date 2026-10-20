@@ -1035,18 +1035,127 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
         .order_by(models.Sinoptico.creado_en.desc())
         .all()
     )
-    return [
-        {
+
+    # Plan de estudio y nivel de cada sinóptico, deducidos de las asignaturas que contiene
+    # (el sinóptico no los guarda directamente). Una sola consulta para todos.
+    combos = (
+        db.query(
+            models.SinopticoItem.sinoptico_id,
+            models.Asignatura.plan_estudio_id,
+            models.Asignatura.nivel_semestral,
+            func.count(models.SinopticoItem.id),
+        )
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .group_by(
+            models.SinopticoItem.sinoptico_id,
+            models.Asignatura.plan_estudio_id,
+            models.Asignatura.nivel_semestral,
+        )
+        .all()
+    )
+    planes_por_sin = defaultdict(lambda: defaultdict(int))
+    niveles_por_sin = defaultdict(set)
+    for sin_id, plan_id, nivel, cantidad in combos:
+        if plan_id is not None:
+            planes_por_sin[sin_id][plan_id] += cantidad
+        if nivel is not None:
+            niveles_por_sin[sin_id].add(nivel)
+
+    # Planes activos por carrera: sirve para sinópticos vacíos de una carrera con un único plan
+    planes_carrera = defaultdict(list)
+    for p in db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all():
+        planes_carrera[p.carrera_id].append(p.id)
+
+    resultado = []
+    for sinoptico, carrera, semestre in filas:
+        planes = planes_por_sin.get(sinoptico.id)
+        if planes:
+            plan_id = max(planes, key=planes.get)
+        elif len(planes_carrera.get(carrera.id, [])) == 1:
+            plan_id = planes_carrera[carrera.id][0]
+        else:
+            plan_id = None
+
+        niveles = niveles_por_sin.get(sinoptico.id, set())
+        if len(niveles) == 1:
+            nivel = next(iter(niveles))
+        elif len(niveles) > 1:
+            nivel = 0   # 0 = varios niveles (el filtro queda en "Todos los niveles")
+        else:
+            nivel = None  # sinóptico vacío: no se sabe, el frontend no toca el filtro
+
+        resultado.append({
             "id": sinoptico.id,
             "carrera_id": carrera.id,
             "carrera": carrera.nombre,
             "codigo_carrera": carrera.codigo,
+            "semestre_id": semestre.id,
             "semestre": f"{semestre.anio}-{semestre.numero}",
+            "plan_estudio_id": plan_id,
+            "nivel_semestral": nivel,
             "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada),
             "creado_en": sinoptico.creado_en,
-        }
-        for sinoptico, carrera, semestre in filas
-    ]
+        })
+    return resultado
+
+
+@app.get("/api/sinopticos/{sinoptico_id}/filtros")
+def filtros_de_sinoptico(
+    sinoptico_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
+    """
+    Datos para rellenar los filtros de la izquierda al abrir un sinóptico:
+    carrera, plan de estudio, semestre, nivel y jornada.
+    """
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
+
+    combos = (
+        db.query(
+            models.Asignatura.plan_estudio_id,
+            models.Asignatura.nivel_semestral,
+            func.count(models.SinopticoItem.id),
+        )
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .filter(models.SinopticoItem.sinoptico_id == sinoptico_id)
+        .group_by(models.Asignatura.plan_estudio_id, models.Asignatura.nivel_semestral)
+        .all()
+    )
+    planes = defaultdict(int)
+    niveles = set()
+    for plan_id, nivel, cantidad in combos:
+        if plan_id is not None:
+            planes[plan_id] += cantidad
+        if nivel is not None:
+            niveles.add(nivel)
+
+    if planes:
+        plan_id = max(planes, key=planes.get)
+    else:
+        # sinóptico vacío: si la carrera tiene un único plan activo, es ese
+        planes_carrera = db.query(models.PlanEstudio.id).filter(
+            models.PlanEstudio.carrera_id == sinoptico.carrera_id,
+            models.PlanEstudio.activo == True,
+        ).all()
+        plan_id = planes_carrera[0][0] if len(planes_carrera) == 1 else None
+
+    if len(niveles) == 1:
+        nivel = next(iter(niveles))
+    elif len(niveles) > 1:
+        nivel = 0      # varios niveles -> "Todos los niveles"
+    else:
+        nivel = None   # vacío: no se toca el filtro
+
+    return {
+        "carrera_id": sinoptico.carrera_id,
+        "plan_estudio_id": plan_id,
+        "semestre_id": sinoptico.semestre_id,
+        "nivel_semestral": nivel,
+        "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada),
+    }
 
 
 @app.get("/api/sinopticos/eventos")

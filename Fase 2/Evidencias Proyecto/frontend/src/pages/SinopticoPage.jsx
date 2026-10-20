@@ -201,15 +201,22 @@ export default function SinopticoPage() {
     }
   }
 
-  // Al abrir/seleccionar un sinóptico existente se toma su carrera y jornada, para que
-  // funcionen el resaltado de profesores y el orden de asignaturas (igual que al crear uno).
+  // Al abrir/seleccionar un sinóptico existente se rellenan los filtros de la izquierda
+  // (plan de estudio, semestre, nivel y jornada) con los datos de ese sinóptico.
   useEffect(() => {
     if (!sinopticoSel) return
-    const existente = sinopticosExistentes.find(x => String(x.id) === String(sinopticoSel))
-    if (!existente) return
-    if (existente.carrera_id) setCarreraSel(String(existente.carrera_id))
-    if (existente.jornada) setJornadaSel(existente.jornada)
-  }, [sinopticoSel, sinopticosExistentes])
+    api.get(`/sinopticos/${sinopticoSel}/filtros`)
+      .then(({ data }) => {
+        if (data.carrera_id) setCarreraSel(String(data.carrera_id))
+        if (data.plan_estudio_id) setPlanSel(String(data.plan_estudio_id))
+        if (data.semestre_id) setSemestreSel(String(data.semestre_id))
+        if (data.jornada) setJornadaSel(data.jornada)
+        // nivel: número = ese nivel; 0 = varios niveles ("Todos"); null = sinóptico vacío (no se toca)
+        if (data.nivel_semestral === 0) setNivelSel('')
+        else if (data.nivel_semestral) setNivelSel(String(data.nivel_semestral))
+      })
+      .catch(err => console.error('No se pudieron rellenar los filtros del sinóptico:', err))
+  }, [sinopticoSel])
 
   useEffect(() => {
     const idDesdeUrl = searchParams.get('id')

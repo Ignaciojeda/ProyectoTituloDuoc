@@ -34,6 +34,7 @@ export default function SalasGaleria() {
   const [salas, setSalas] = useState([])
   const [eventosPorSala, setEventosPorSala] = useState({})
   const [cargando, setCargando] = useState(true)
+  const [busqueda, setBusqueda] = useState('')
 
   useEffect(() => {
     const cargarTodo = async () => {
@@ -57,8 +58,21 @@ export default function SalasGaleria() {
     cargarTodo()
   }, [])
 
+  // Normaliza para buscar sin importar mayúsculas ni tildes
+  const normalizar = (t) =>
+    String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+
+  // Búsqueda por nombre de sala o por edificio (ej. "W610", "w6", "edificio y")
+  const terminos = normalizar(busqueda).split(/\s+/).filter(Boolean)
+  const salasFiltradas = terminos.length === 0
+    ? salas
+    : salas.filter(s => {
+        const texto = normalizar(`${s.nombre} edificio ${s.edificio || ''}`)
+        return terminos.every(t => texto.includes(t))
+      })
+
   // Agrupa las salas por edificio (W, Y, Z)
-  const porEdificio = salas.reduce((acc, s) => {
+  const porEdificio = salasFiltradas.reduce((acc, s) => {
     const clave = s.edificio || 'Sin edificio'
     if (!acc[clave]) acc[clave] = []
     acc[clave].push(s)
@@ -81,12 +95,48 @@ export default function SalasGaleria() {
       <div style={{ padding: '16px 24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <h2 style={{ margin: 0, color: 'var(--duoc-navy)' }}>Salas y su ocupación</h2>
+
+          <div style={{ position: 'relative', width: '320px', maxWidth: '100%' }}>
+            <input
+              type="text"
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="🔍 Buscar sala (ej. W610) o edificio..."
+              aria-label="Buscar sala"
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '8px 30px 8px 10px', fontSize: '13px',
+                border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)', outline: 'none',
+              }}
+            />
+            {busqueda && (
+              <button
+                onClick={() => setBusqueda('')}
+                title="Borrar búsqueda"
+                style={{
+                  position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
+                  border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '15px', color: 'var(--text-muted)',
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
+
+        {busqueda && !cargando && (
+          <p style={{ margin: '0 0 12px', fontSize: '12px', color: 'var(--text-muted)' }}>
+            {salasFiltradas.length} sala{salasFiltradas.length !== 1 ? 's' : ''} encontrada{salasFiltradas.length !== 1 ? 's' : ''} de {salas.length}
+          </p>
+        )}
 
         {cargando && <p style={{ color: 'var(--text-muted)' }}>Cargando salas...</p>}
 
         {!cargando && salas.length === 0 && (
           <p style={{ color: 'var(--text-muted)' }}>Todavía no hay salas registradas.</p>
+        )}
+
+        {!cargando && salas.length > 0 && salasFiltradas.length === 0 && (
+          <p style={{ color: 'var(--text-muted)' }}>No se encontraron salas que coincidan con "{busqueda}".</p>
         )}
 
         {Object.entries(porEdificio)
