@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Response
 from zoneinfo import ZoneInfo
 from pdf_sinoptico import construir_pdf_sinoptico
+from excel_sinoptico import construir_excel_sinoptico
 import io
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
@@ -220,7 +221,8 @@ def generar_seccion(db, sinoptico_id, asignatura, jornada):
     ).first()
     if existente:
         return existente[0]
-    return f"{asignatura.codigo}-001{valor[:1].upper()}"
+    # Sin enumeración (-001) ni letra de jornada: solo las siglas/código de la asignatura
+    return f"{asignatura.codigo}"
 
 def limpiar_texto(texto: str) -> str:
     """Elimina tildes, caracteres especiales y convierte a minúsculas para comparaciones flexibles."""
@@ -781,6 +783,7 @@ def mi_horario_docente(
                 "sala": sala.nombre if sala else "Sin asignar",
                 "jornada": jornada.nombre if jornada else bloque.jornada.value,
                 "seccion": item.seccion,
+                "tipo": item.tipo,
                 "sinoptico_id": item.sinoptico_id,
                 "color": item.color,
                 "semanas": parse_semanas(item.semanas),
@@ -1034,7 +1037,7 @@ def generar_sinoptico(
                         profesor_id=p.id,
                         sala_id=s.id,
                         bloque_horario_id=b.id,
-                        seccion=f"{asignatura.codigo}-001{letra_sesion}",
+                        seccion=f"{asignatura.codigo}",
                         id_seccion=None,
                         fecha_inicio=inicio,
                         fecha_final=fin,
@@ -1275,6 +1278,7 @@ def eventos_todos_los_sinopticos(db: Session = Depends(get_db), _: models.Usuari
                 "bloque_horario_id": item.bloque_horario_id,
                 "jornada_id": item.jornada_id,
                 "capacidad_inicial": item.capacidad_inicial,
+                "tipo": item.tipo,
                 "color": item.color,
                 "semanas": parse_semanas(item.semanas),
             }
@@ -1323,6 +1327,7 @@ def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: model
                 "bloque_horario_id": item.bloque_horario_id,
                 "jornada_id": item.jornada_id,
                 "capacidad_inicial": item.capacidad_inicial,
+                "tipo": item.tipo,
                 "color": item.color,
                 "semanas": parse_semanas(item.semanas),
             }
@@ -1390,6 +1395,67 @@ def exportar_sinoptico_pdf(
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="sinoptico_{sinoptico.id}.pdf"'},
+    )
+
+
+@app.get("/api/sinopticos/{sinoptico_id}/excel")
+def exportar_sinoptico_excel(
+    sinoptico_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Exporta el sinóptico a Excel: hoja 'Horario' (grilla) y hoja 'Detalle' (una fila por bloque)."""
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
+    carrera = db.query(models.Carrera).filter(models.Carrera.id == sinoptico.carrera_id).first()
+    semestre = db.query(models.Semestre).filter(models.Semestre.id == sinoptico.semestre_id).first()
+
+    filas = (
+        db.query(models.SinopticoItem, models.Asignatura, models.Profesor, models.Sala, models.BloqueHorario)
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
+        .outerjoin(models.Sala, models.SinopticoItem.sala_id == models.Sala.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .filter(models.SinopticoItem.sinoptico_id == sinoptico_id)
+        .all()
+    )
+    items = []
+    for item, asignatura, profesor, sala, bloque in filas:
+        items.append({
+            "codigo": asignatura.codigo,
+            "nombre": asignatura.nombre,
+            "seccion": item.seccion,
+            "tipo": TIPOS_CLASE.get(item.tipo) if item.tipo else None,
+            "profesor": f"{profesor.nombre} {profesor.apellido}" if profesor else None,
+            "sala": sala.nombre if sala else None,
+            "capacidad": item.capacidad_inicial,
+            "dia_semana": bloque.dia_semana,
+            "hora_inicio": bloque.hora_inicio,
+            "hora_fin": bloque.hora_fin,
+            "semanas": parse_semanas(item.semanas) or list(range(1, SEMANAS_DEFAULT + 1)),
+            "color": item.color,
+        })
+
+    consulta_bloques = db.query(models.BloqueHorario.hora_inicio, models.BloqueHorario.hora_fin)
+    jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada)
+    if jornada_val != "mixta":
+        consulta_bloques = consulta_bloques.filter(models.BloqueHorario.jornada == sinoptico.jornada)
+    bloques_horas = [(a, b) for a, b in consulta_bloques.distinct().all()]
+
+    contenido = construir_excel_sinoptico(
+        sinoptico_id=sinoptico.id,
+        carrera_nombre=carrera.nombre if carrera else "",
+        jornada_nombre=jornada_val.capitalize(),
+        semestre_numero=semestre.numero if semestre else 1,
+        anio=semestre.anio if semestre else LUNES_INICIO_SEMESTRE.year,
+        items=items,
+        bloques_horas=bloques_horas,
+    )
+    return Response(
+        content=contenido,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="sinoptico_{sinoptico.id}.xlsx"'},
     )
 
 
@@ -1486,9 +1552,28 @@ def eventos_sala(sala_id: int, db: Session = Depends(get_db), _: models.Usuario 
     return eventos
 
 
+TIPOS_CLASE = {"teorica": "Teórica", "practica": "Práctica"}
+
+
+class SinopticoItemCreateConTipo(schemas.SinopticoItemCreate):
+    tipo: Optional[str] = None   # teorica | practica | None
+
+
+class SinopticoItemUpdateConTipo(schemas.SinopticoItemUpdate):
+    tipo: Optional[str] = None
+
+
+def normalizar_tipo(valor: Optional[str]) -> Optional[str]:
+    if valor in (None, ""):
+        return None
+    if valor not in TIPOS_CLASE:
+        raise HTTPException(status_code=400, detail="El tipo de clase debe ser teórica o práctica.")
+    return valor
+
+
 @app.post("/api/sinopticos/items", response_model=schemas.SinopticoItemOut, status_code=201)
 def agregar_item_sinoptico(
-    datos: schemas.SinopticoItemCreate,
+    datos: SinopticoItemCreateConTipo,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(require_coordinador),
 ):
@@ -1543,6 +1628,7 @@ def agregar_item_sinoptico(
         seccion=generar_seccion(db, datos.sinoptico_id, asignatura, jornada_para_item),
         id_seccion=None,
         capacidad_inicial=datos.capacidad_inicial,
+        tipo=normalizar_tipo(datos.tipo),
         fecha_inicio=inicio,
         fecha_final=fin,
         jornada_id=obtener_jornada_id(db, jornada_para_item),
@@ -1569,7 +1655,7 @@ def agregar_item_sinoptico(
 @app.put("/api/sinopticos/items/{item_id}", response_model=schemas.SinopticoItemOut)
 def editar_item_sinoptico(
     item_id: int,
-    datos: schemas.SinopticoItemUpdate,
+    datos: SinopticoItemUpdateConTipo,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(require_coordinador),
 ):
@@ -1621,6 +1707,7 @@ def editar_item_sinoptico(
     item.sala_id = datos.sala_id
     item.bloque_horario_id = datos.bloque_horario_id
     item.capacidad_inicial = datos.capacidad_inicial
+    item.tipo = normalizar_tipo(datos.tipo)
     if datos.color:
         item.color = datos.color
     item.fecha_inicio, item.fecha_final = fechas_para_item(bloque.dia_semana, item.semanas)

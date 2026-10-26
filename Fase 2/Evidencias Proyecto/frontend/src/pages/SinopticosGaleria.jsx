@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
-import api from '../api/axios'
+import api from '../api/client'
 import { colorValido } from '../utils/color'
-import { descargarPdfSinoptico } from '../utils/pdf'
+import { descargarPdfSinoptico, descargarExcelSinoptico } from '../utils/pdf'
 import '../duoc.css'
 
 const MODULOS_DUOC = [
@@ -161,6 +161,13 @@ export default function SinopticosGaleria() {
                       style={{ width: '100%', padding: '6px', fontSize: '11px', marginTop: '6px' }}
                     >
                       Exportar PDF
+                    </button>
+                    <button
+                      onClick={() => descargarExcelSinoptico(s.id).catch(() => window.alert('No se pudo generar el Excel.'))}
+                      className="duoc-btn-accent"
+                      style={{ width: '100%', padding: '6px', fontSize: '11px', marginTop: '6px' }}
+                    >
+                      Exportar Excel
                     </button>
                   </div>
                 )

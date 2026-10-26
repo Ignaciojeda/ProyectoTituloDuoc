@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Navbar from '../components/Navbar'
-import api from '../api/axios'
+import api from "../api/client";
 import '../duoc.css'
 
 const DIAS = [

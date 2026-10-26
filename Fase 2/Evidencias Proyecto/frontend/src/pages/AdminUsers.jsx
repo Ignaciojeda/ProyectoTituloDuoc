@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import api from '../api/axios'
+import api from "../api/client";
 import Navbar from '../components/Navbar'
 import '../duoc.css'
 

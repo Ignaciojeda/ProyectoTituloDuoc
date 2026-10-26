@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
-import api from '../api/axios'
+import api from "../api/client";
 import { colorValido, colorTextoSobre } from '../utils/color'
 import '../duoc.css'
 

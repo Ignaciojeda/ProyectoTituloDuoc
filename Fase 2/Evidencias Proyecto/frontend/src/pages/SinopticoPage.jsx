@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
-import api from '../api/axios'
+import api from '../api/client'
 import SelectorColor from '../components/SelectorColor'
 import { COLOR_DEFAULT, colorValido, colorTextoSobre } from '../utils/color'
-import { descargarPdfSinoptico } from '../utils/pdf'
+import { descargarPdfSinoptico, descargarExcelSinoptico } from '../utils/pdf'
 import '../duoc.css'
 
 const MODULOS_DUOC = [
@@ -73,6 +73,7 @@ export default function SinopticoPage() {
     sala_id: '',
     bloque_horario_id: '',
     capacidad_inicial: '',
+    tipo: '',
     color: COLOR_DEFAULT,
   })
   const [bloqueFijo, setBloqueFijo] = useState(false)
@@ -285,6 +286,16 @@ export default function SinopticoPage() {
     }
   }
 
+  // Salas con sillas suficientes para la capacidad indicada (la sala ya elegida siempre se mantiene)
+  const salasParaCapacidad = (capacidad, salaActual) => {
+    const cap = parseInt(capacidad)
+    const sinCapacidad = isNaN(cap) || cap <= 0
+    return salas
+      .filter(s => (sinCapacidad ? false : s.cantidad_sillas >= cap) || String(s.id) === String(salaActual))
+      .sort((a, b) => a.cantidad_sillas - b.cantidad_sillas || String(a.nombre).localeCompare(String(b.nombre)))
+  }
+  const capacidadValida = (c) => !isNaN(parseInt(c)) && parseInt(c) > 0
+
   const [verHistorial, setVerHistorial] = useState(false)
   const [historial, setHistorial] = useState([])
   const [cargandoHistorial, setCargandoHistorial] = useState(false)
@@ -301,6 +312,19 @@ export default function SinopticoPage() {
       setHistorial([])
     } finally {
       setCargandoHistorial(false)
+    }
+  }
+
+  const handleExportarExcel = async () => {
+    if (!sinopticoSel) {
+      setMensaje('Primero seleccione un sinóptico de la lista.')
+      return
+    }
+    try {
+      await descargarExcelSinoptico(sinopticoSel)
+    } catch (err) {
+      console.error('Error al exportar Excel:', err)
+      setMensaje('No se pudo generar el Excel.')
     }
   }
 
@@ -387,6 +411,7 @@ export default function SinopticoPage() {
       seccion: clase.extendedProps?.seccion ?? '',
       id_seccion: clase.extendedProps?.id_seccion ?? '',
       capacidad_inicial: clase.extendedProps?.capacidad_inicial ?? '',
+      tipo: clase.extendedProps?.tipo ?? '',
       color: colorValido(clase.extendedProps?.color),
       semanas: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
       semanasOriginales: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
@@ -411,6 +436,7 @@ export default function SinopticoPage() {
         sala_id: itemEditando.sala_id ? parseInt(itemEditando.sala_id) : null,
         bloque_horario_id: parseInt(itemEditando.bloque_horario_id),
         capacidad_inicial: itemEditando.capacidad_inicial !== '' ? parseInt(itemEditando.capacidad_inicial) : null,
+        tipo: itemEditando.tipo || null,
         color: itemEditando.color,
       })
 
@@ -456,6 +482,7 @@ export default function SinopticoPage() {
       sala_id: '',
       bloque_horario_id: '',
       capacidad_inicial: '',
+      tipo: '',
       color: COLOR_DEFAULT,
     })
     setProfesoresDisponibles(profesores)
@@ -492,6 +519,7 @@ export default function SinopticoPage() {
       sala_id: '',
       bloque_horario_id: String(bloque.id),
       capacidad_inicial: '',
+      tipo: '',
       color: COLOR_DEFAULT,
     })
 
@@ -514,6 +542,7 @@ export default function SinopticoPage() {
         sala_id: nuevoItem.sala_id ? parseInt(nuevoItem.sala_id) : null,
         bloque_horario_id: parseInt(nuevoItem.bloque_horario_id),
         capacidad_inicial: nuevoItem.capacidad_inicial !== '' ? parseInt(nuevoItem.capacidad_inicial) : null,
+        tipo: nuevoItem.tipo || null,
         color: nuevoItem.color,
       })
 
@@ -728,6 +757,15 @@ export default function SinopticoPage() {
                 style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%', opacity: sinopticoSel ? 1 : 0.6, cursor: sinopticoSel ? 'pointer' : 'not-allowed' }}
               >
                 Exportar PDF
+              </button>
+
+              <button
+                onClick={handleExportarExcel}
+                disabled={!sinopticoSel}
+                className="duoc-btn-accent"
+                style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%', opacity: sinopticoSel ? 1 : 0.6, cursor: sinopticoSel ? 'pointer' : 'not-allowed' }}
+              >
+                Exportar Excel
               </button>
 
               <button
@@ -1001,22 +1039,7 @@ export default function SinopticoPage() {
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={itemEditando.sala_id}
-                onChange={e => setItemEditando({ ...itemEditando, sala_id: e.target.value })}
-              >
-                <option value="">-- Sin asignar --</option>
-                {salas.map(s => (
-                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Cantidad de sillas / capacidad inicial</label>
               <input
                 type="number"
                 min="0"
@@ -1025,6 +1048,36 @@ export default function SinopticoPage() {
                 value={itemEditando.capacidad_inicial}
                 onChange={e => setItemEditando({ ...itemEditando, capacidad_inicial: e.target.value })}
               />
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala {itemEditando.capacidad_inicial !== '' && <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(con {itemEditando.capacidad_inicial} sillas o más)</span>}</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.sala_id}
+                disabled={!capacidadValida(itemEditando.capacidad_inicial) && !itemEditando.sala_id}
+                onChange={e => setItemEditando({ ...itemEditando, sala_id: e.target.value })}
+              >
+                <option value="">{capacidadValida(itemEditando.capacidad_inicial) || itemEditando.sala_id ? '-- Sin asignar --' : 'Primero indica la cantidad de sillas'}</option>
+                {salasParaCapacidad(itemEditando.capacidad_inicial, itemEditando.sala_id).map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Tipo de clase</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={itemEditando.tipo}
+                onChange={e => setItemEditando({ ...itemEditando, tipo: e.target.value })}
+              >
+                <option value="">-- Sin definir --</option>
+                <option value="teorica">Teórica</option>
+                <option value="practica">Práctica</option>
+              </select>
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '16px' }}>
@@ -1185,22 +1238,7 @@ export default function SinopticoPage() {
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala</label>
-              <select
-                className="duoc-select"
-                style={{ padding: '6px 8px', fontSize: '12px' }}
-                value={nuevoItem.sala_id}
-                onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
-              >
-                <option value="">-- Sin asignar --</option>
-                {salas.map(s => (
-                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
-              <label className="duoc-label" style={{ fontSize: '11px' }}>Capacidad inicial</label>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Cantidad de sillas / capacidad inicial</label>
               <input
                 type="number"
                 min="0"
@@ -1210,6 +1248,36 @@ export default function SinopticoPage() {
                 value={nuevoItem.capacidad_inicial}
                 onChange={e => setNuevoItem({ ...nuevoItem, capacidad_inicial: e.target.value })}
               />
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Sala {nuevoItem.capacidad_inicial !== '' && <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>(con {nuevoItem.capacidad_inicial} sillas o más)</span>}</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.sala_id}
+                disabled={!capacidadValida(nuevoItem.capacidad_inicial) && !nuevoItem.sala_id}
+                onChange={e => setNuevoItem({ ...nuevoItem, sala_id: e.target.value })}
+              >
+                <option value="">{capacidadValida(nuevoItem.capacidad_inicial) || nuevoItem.sala_id ? '-- Sin asignar --' : 'Primero indica la cantidad de sillas'}</option>
+                {salasParaCapacidad(nuevoItem.capacidad_inicial, nuevoItem.sala_id).map(s => (
+                  <option key={s.id} value={s.id}>{s.nombre} ({s.cantidad_sillas} sillas)</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
+              <label className="duoc-label" style={{ fontSize: '11px' }}>Tipo de clase</label>
+              <select
+                className="duoc-select"
+                style={{ padding: '6px 8px', fontSize: '12px' }}
+                value={nuevoItem.tipo}
+                onChange={e => setNuevoItem({ ...nuevoItem, tipo: e.target.value })}
+              >
+                <option value="">-- Sin definir --</option>
+                <option value="teorica">Teórica</option>
+                <option value="practica">Práctica</option>
+              </select>
             </div>
 
             <div className="duoc-form-group" style={{ marginBottom: '16px' }}>

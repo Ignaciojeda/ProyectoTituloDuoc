@@ -181,6 +181,7 @@ class SinopticoItem(Base):
     seccion = Column(String(50), nullable=True)
 
     capacidad_inicial = Column(Integer, nullable=True)
+    tipo = Column(String(10), nullable=True) 
 
     # Color del bloque en el horario, en hexadecimal #RRGGBB (ej. "#2563eb").
     # Los bloques nuevos (p. ej. al generar automáticamente) salen con el color por defecto.
