@@ -913,13 +913,28 @@ def crear_sinoptico_vacio(
     return {"sinoptico_id": nuevo.id, "asignaturas_sin_asignar": []}
 
 
+class GenerarSinopticoConId(schemas.GenerarSinopticoRequest):
+    # Si viene, se rellena ese sinóptico (sin crear uno nuevo) con las asignaturas que aún no tiene
+    sinoptico_id: Optional[int] = None
+
+
 @app.post("/api/sinopticos/generar")
 def generar_sinoptico(
-    datos: schemas.GenerarSinopticoRequest,
+    datos: GenerarSinopticoConId,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(require_coordinador)
 ):
     """Generación automática asignando bloques respetando la disponibilidad docente sin choques horarios."""
+
+    # 0. ¿Se pidió generar DENTRO de un sinóptico existente?
+    sinoptico_existente = None
+    if datos.sinoptico_id:
+        sinoptico_existente = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
+        if not sinoptico_existente:
+            raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+        # Carrera y jornada son las del sinóptico, no las del filtro
+        datos.carrera_id = sinoptico_existente.carrera_id
+        datos.jornada = sinoptico_existente.jornada
 
     # 1. Validar existencia de asignaturas activas para la carrera/escuela
     #    (opcionalmente filtradas por nivel_semestral, si viene en la petición)
@@ -945,13 +960,16 @@ def generar_sinoptico(
     es_mixta = jornada_val == "mixta"
 
     # 3. Crear el registro del sinóptico
-    nuevo_sinoptico = models.Sinoptico(
-        carrera_id=datos.carrera_id,
-        semestre_id=datos.semestre_id,
-        jornada=datos.jornada
-    )
-    db.add(nuevo_sinoptico)
-    db.flush()
+    if sinoptico_existente:
+        nuevo_sinoptico = sinoptico_existente
+    else:
+        nuevo_sinoptico = models.Sinoptico(
+            carrera_id=datos.carrera_id,
+            semestre_id=datos.semestre_id,
+            jornada=datos.jornada
+        )
+        db.add(nuevo_sinoptico)
+        db.flush()
     jornada_id_fijo = obtener_jornada_id(db, datos.jornada)
 
     # 4. Consultar bloques horarios para la jornada indicada.
@@ -1003,6 +1021,13 @@ def generar_sinoptico(
     sala_carga = defaultdict(int)
     carga_dia = defaultdict(int)
     bloques_usados = set()  # bloques ya ocupados por una clase de ESTE sinóptico
+    ya_presentes = set()    # asignaturas que ese sinóptico ya tiene (solo al rellenar uno existente)
+    if sinoptico_existente:
+        for a_id, b_id in db.query(models.SinopticoItem.asignatura_id, models.SinopticoItem.bloque_horario_id).filter(
+            models.SinopticoItem.sinoptico_id == sinoptico_existente.id
+        ).all():
+            ya_presentes.add(a_id)
+            bloques_usados.add(b_id)
 
     ranuras = ranuras_con_ventanas(bloques)
     todas_las_sesiones = pares_consecutivos(bloques)
@@ -1051,6 +1076,8 @@ def generar_sinoptico(
 
     # 5. Algoritmo de distribución de clases
     for asignatura in asignaturas:
+        if asignatura.id in ya_presentes:
+            continue
         area_requerida = area_para_asignatura(asignatura.nombre)
 
         candidatos_prof = sorted(profesores, key=lambda p: (
@@ -1092,7 +1119,8 @@ def generar_sinoptico(
         db.commit()
         db.refresh(nuevo_sinoptico)
         registrar_cambio(db, usuario, "sinoptico_generado", "sinoptico",
-                         "Generó el sinóptico automáticamente", sinoptico_id=nuevo_sinoptico.id)
+                         "Generó automáticamente las asignaturas faltantes" if sinoptico_existente else "Generó el sinóptico automáticamente",
+                         sinoptico_id=nuevo_sinoptico.id)
         db.commit()
     except Exception as e:
         db.rollback()

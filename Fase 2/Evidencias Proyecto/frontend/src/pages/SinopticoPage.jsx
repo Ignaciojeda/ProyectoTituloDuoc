@@ -242,6 +242,16 @@ export default function SinopticoPage() {
       setMensaje('Debe seleccionar plan de estudio y semestre.')
       return
     }
+    // Si hay un sinóptico seleccionado, se ofrece generar DENTRO de él en vez de crear otro
+    let rellenarId = null
+    if (sinopticoSel) {
+      const dentro = window.confirm(
+        `Tienes seleccionado el sinóptico #${sinopticoSel}.\n\n` +
+        `Aceptar: generar las asignaturas que le faltan DENTRO de ese sinóptico.\n` +
+        `Cancelar: crear un sinóptico nuevo.`
+      )
+      if (dentro) rellenarId = parseInt(sinopticoSel)
+    }
     try {
       const { data } = await api.post('/sinopticos/generar', {
         carrera_id: parseInt(carreraSel),
@@ -249,8 +259,11 @@ export default function SinopticoPage() {
         semestre_id: parseInt(semestreSel),
         jornada: jornadaSel,
         nivel_semestral: nivelSel ? parseInt(nivelSel) : null,
+        sinoptico_id: rellenarId,
       })
-      setMensaje(`Sinóptico #${data.sinoptico_id} generado correctamente.`)
+      setMensaje(rellenarId
+        ? `Sinóptico #${data.sinoptico_id} completado correctamente.`
+        : `Sinóptico #${data.sinoptico_id} generado correctamente.`)
       setSinopticoSel(data.sinoptico_id)
       cargarEventosSinoptico(data.sinoptico_id)
 
@@ -295,6 +308,58 @@ export default function SinopticoPage() {
       .sort((a, b) => a.cantidad_sillas - b.cantidad_sillas || String(a.nombre).localeCompare(String(b.nombre)))
   }
   const capacidadValida = (c) => !isNaN(parseInt(c)) && parseInt(c) > 0
+
+  // Al cambiar la sala de un bloque: ids de OTROS bloques de la misma asignatura (otros días) a los que también se aplica
+  const [salaExtra, setSalaExtra] = useState([])
+
+  // Ocupación de TODAS las salas (todos los sinópticos), para avisar al instante si una sala está ocupada
+  const [ocupacionSalas, setOcupacionSalas] = useState({})
+  const [cargandoOcupacion, setCargandoOcupacion] = useState(false)
+
+  const cargarOcupacionSalas = async () => {
+    setCargandoOcupacion(true)
+    try {
+      const { data } = await api.get('/salas/eventos')
+      setOcupacionSalas(data || {})
+    } catch (err) {
+      console.error('No se pudo cargar la ocupación de salas:', err)
+    } finally {
+      setCargandoOcupacion(false)
+    }
+  }
+
+  // Devuelve la clase que ocupa la sala en ese día/hora (o undefined si está libre)
+  const ocupanteSala = (salaId, dia, horaInicio, ignorarItemId) => {
+    if (!salaId) return undefined
+    const lista = ocupacionSalas[String(salaId)] || []
+    return lista.find(e =>
+      String(e.id) !== String(ignorarItemId) &&
+      (Array.isArray(e.daysOfWeek) ? e.daysOfWeek[0] : e.daysOfWeek) === dia &&
+      String(e.startTime).slice(0, 5) === String(horaInicio).slice(0, 5)
+    )
+  }
+  const textoOcupante = (e) => `${e.title}${e.extendedProps?.carrera ? ` (${e.extendedProps.carrera})` : ''}`
+
+  // Bloque horario que se está editando (puede haber cambiado dentro del mismo formulario)
+  const ocupanteDelBloqueEditado = () => {
+    if (!itemEditando?.sala_id) return undefined
+    const b = bloquesHorario.find(x => String(x.id) === String(itemEditando.bloque_horario_id))
+    if (!b) return undefined
+    return ocupanteSala(itemEditando.sala_id, b.dia_semana, b.hora_inicio, itemEditando.id)
+  }
+
+  useEffect(() => { setSalaExtra([]) }, [itemEditando?.sala_id])
+
+  const hermanosDelBloque = (item) => {
+    if (!item) return []
+    return eventos
+      .filter(e => String(e.extendedProps?.asignatura_id) === String(item.asignatura_id) && String(e.id) !== String(item.id))
+      .sort((a, b) => (a.daysOfWeek?.[0] ?? 0) - (b.daysOfWeek?.[0] ?? 0) || String(a.startTime).localeCompare(String(b.startTime)))
+  }
+  const etiquetaDiaHora = (e) => {
+    const dia = DIAS_SEMANA.find(d => d.key === (Array.isArray(e.daysOfWeek) ? e.daysOfWeek[0] : e.daysOfWeek))?.nombre || ''
+    return `${dia} ${String(e.startTime || '').slice(0, 5)}`
+  }
 
   const [verHistorial, setVerHistorial] = useState(false)
   const [historial, setHistorial] = useState([])
@@ -407,6 +472,7 @@ export default function SinopticoPage() {
       asignatura_id: clase.extendedProps?.asignatura_id ?? '',
       profesor_id: clase.extendedProps?.profesor_id ?? '',
       sala_id: clase.extendedProps?.sala_id ?? '',
+      salaOriginal: clase.extendedProps?.sala_id ?? '',
       bloque_horario_id: bloqueId,
       seccion: clase.extendedProps?.seccion ?? '',
       id_seccion: clase.extendedProps?.id_seccion ?? '',
@@ -416,6 +482,8 @@ export default function SinopticoPage() {
       semanas: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
       semanasOriginales: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
     })
+    setSalaExtra([])
+    cargarOcupacionSalas()
     if (bloqueId) {
       cargarProfesoresPorDisponibilidad(bloqueId, clase.id)
     }
@@ -429,6 +497,12 @@ export default function SinopticoPage() {
       return
     }
 
+    const choque = ocupanteDelBloqueEditado()
+    if (choque) {
+      window.alert(`Esa sala ya está ocupada en este horario por: ${textoOcupante(choque)}.`)
+      return
+    }
+
     try {
       await api.put(`/sinopticos/items/${itemEditando.id}`, {
         asignatura_id: parseInt(itemEditando.asignatura_id),
@@ -439,6 +513,29 @@ export default function SinopticoPage() {
         tipo: itemEditando.tipo || null,
         color: itemEditando.color,
       })
+
+      // Si se cambió la sala y el usuario eligió otros días, se aplica también a esos bloques
+      const fallosSala = []
+      for (const otroId of salaExtra) {
+        const otro = eventos.find(e => String(e.id) === String(otroId))
+        if (!otro) continue
+        try {
+          await api.put(`/sinopticos/items/${otro.id}`, {
+            asignatura_id: otro.extendedProps.asignatura_id,
+            profesor_id: otro.extendedProps.profesor_id ?? null,
+            sala_id: itemEditando.sala_id ? parseInt(itemEditando.sala_id) : null,
+            bloque_horario_id: otro.extendedProps.bloque_horario_id,
+            capacidad_inicial: otro.extendedProps.capacidad_inicial ?? null,
+            tipo: otro.extendedProps.tipo || null,
+            color: itemEditando.color,
+          })
+        } catch (errOtro) {
+          fallosSala.push(`${etiquetaDiaHora(otro)}: ${errOtro.response?.data?.detail || 'no se pudo cambiar la sala'}`)
+        }
+      }
+      if (fallosSala.length) {
+        window.alert('La sala no se pudo cambiar en estos días:\n\n' + fallosSala.join('\n'))
+      }
 
       // Propaga el color a todos los bloques de esta misma asignatura dentro
       // de este mismo sinóptico (para que toda la asignatura luzca igual).
@@ -982,7 +1079,7 @@ export default function SinopticoPage() {
           <div
             onClick={(e) => e.stopPropagation()}
             className="duoc-card"
-            style={{ width: '320px', padding: '18px' }}
+            style={{ width: '320px', padding: '18px', maxHeight: '92vh', overflowY: 'auto' }}
           >
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
               Editar bloque
@@ -1066,6 +1163,71 @@ export default function SinopticoPage() {
               </select>
             </div>
 
+            {itemEditando.sala_id && ocupanteDelBloqueEditado() && (
+              <p style={{ margin: '-4px 0 10px', fontSize: '11px', color: '#b91c1c' }}>
+                ⚠ Esa sala ya está ocupada en este horario por {textoOcupante(ocupanteDelBloqueEditado())}.
+              </p>
+            )}
+
+            {String(itemEditando.sala_id || '') !== String(itemEditando.salaOriginal || '') && itemEditando.sala_id && hermanosDelBloque(itemEditando).length > 0 && (() => {
+              const hermanos = hermanosDelBloque(itemEditando).map(e => {
+                const dia = Array.isArray(e.daysOfWeek) ? e.daysOfWeek[0] : e.daysOfWeek
+                return { e, dia, ocupante: ocupanteSala(itemEditando.sala_id, dia, e.startTime, e.id) }
+              })
+              const libres = hermanos.filter(h => !h.ocupante).map(h => h.e.id)
+              const porDia = hermanos.reduce((acc, h) => { (acc[h.dia] = acc[h.dia] || []).push(h); return acc }, {})
+              return (
+                <div style={{ marginBottom: '10px', padding: '8px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '12px' }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>¿A qué días se aplica el cambio de sala?</div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    {cargandoOcupacion ? 'Revisando disponibilidad de la sala...' : 'Se revisó la disponibilidad de la sala en cada bloque.'}
+                  </div>
+                  <label style={{ display: 'block', marginBottom: '4px' }}>
+                    <input type="checkbox" checked disabled /> Este bloque
+                  </label>
+                  {Object.entries(porDia).map(([dia, lista]) => (
+                    <div key={dia} style={{ marginBottom: '4px' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{DIAS_SEMANA.find(d => d.key === Number(dia))?.nombre}</div>
+                      {lista.map(({ e, ocupante }) => (
+                        <label key={e.id} style={{ display: 'block', marginLeft: '8px', color: ocupante ? '#9ca3af' : 'inherit' }}>
+                          <input
+                            type="checkbox"
+                            disabled={!!ocupante || cargandoOcupacion}
+                            checked={salaExtra.includes(e.id)}
+                            onChange={ev => setSalaExtra(prev => ev.target.checked ? [...prev, e.id] : prev.filter(x => x !== e.id))}
+                          /> {String(e.startTime).slice(0, 5)}{' '}
+                          {ocupante
+                            ? <span style={{ color: '#b91c1c' }}>— sala ocupada por {textoOcupante(ocupante)}</span>
+                            : <span style={{ color: '#15803d' }}>— libre</span>}
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setSalaExtra(libres)}
+                      style={{ flex: 1, padding: '4px', fontSize: '11px', cursor: 'pointer', border: '1px solid #cbd5e1', background: '#fff', borderRadius: '6px' }}
+                    >
+                      Todos los libres
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSalaExtra([])}
+                      style={{ flex: 1, padding: '4px', fontSize: '11px', cursor: 'pointer', border: '1px solid #cbd5e1', background: '#fff', borderRadius: '6px' }}
+                    >
+                      Solo este
+                    </button>
+                  </div>
+                  {hermanos.some(h => h.ocupante) && (
+                    <div style={{ marginTop: '6px', fontSize: '11px', color: '#b45309' }}>
+                      Los bloques ocupados no se pueden cambiar. Si aplicas solo a algunos, la asignatura quedará en salas distintas ese día.
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>Tipo de clase</label>
               <select
@@ -1143,7 +1305,7 @@ export default function SinopticoPage() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', position: 'sticky', bottom: '-18px', background: '#fff', padding: '10px 0 4px', marginTop: '6px', borderTop: '1px solid #eef1f5' }}>
               <button
                 onClick={guardarEdicionBloque}
                 className="duoc-btn-primary"
@@ -1178,7 +1340,7 @@ export default function SinopticoPage() {
           <div
             onClick={(e) => e.stopPropagation()}
             className="duoc-card"
-            style={{ width: '320px', padding: '18px' }}
+            style={{ width: '320px', padding: '18px', maxHeight: '92vh', overflowY: 'auto' }}
           >
             <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '15px', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '6px' }}>
               Agregar ramo
@@ -1288,7 +1450,7 @@ export default function SinopticoPage() {
               />
             </div>
 
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', position: 'sticky', bottom: '-18px', background: '#fff', padding: '10px 0 4px', marginTop: '6px', borderTop: '1px solid #eef1f5' }}>
               <button
                 onClick={guardarNuevoItem}
                 className="duoc-btn-primary"
