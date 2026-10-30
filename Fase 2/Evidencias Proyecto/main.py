@@ -115,7 +115,7 @@ def areas_de_carrera(nombre_carrera: str, nombres_asignaturas):
     return areas
 
 LUNES_INICIO_SEMESTRE = date(2026, 8, 10)
-SEMANAS_DEFAULT = 17
+SEMANAS_DEFAULT = 18
 DIAS_CLASES = {1, 2, 3, 4, 5}  # lunes a viernes
 VENTANA_MIN = 2
 VENTANA_MAX = 3
@@ -563,6 +563,35 @@ def resumen_disponibilidad_profesores(
     )
     return {str(profesor_id): total for profesor_id, total in filas}
 
+@app.get("/api/profesores/horas-semestre")
+def horas_semestre_profesores(
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Carga total del semestre por profesor, según las clases que tiene en todos los sinópticos."""
+    filas = (
+        db.query(
+            models.SinopticoItem.profesor_id,
+            models.SinopticoItem.semanas,
+            models.BloqueHorario.hora_inicio,
+            models.BloqueHorario.hora_fin,
+        )
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .filter(models.SinopticoItem.profesor_id.isnot(None))
+        .all()
+    )
+    res = {}
+    for prof_id, semanas_txt, ini, fin in filas:
+        lista = parse_semanas(semanas_txt)
+        n_sem = len(lista) if lista else SEMANAS_DEFAULT  # sin semanas marcadas = todas
+        minutos = (fin.hour * 60 + fin.minute) - (ini.hour * 60 + ini.minute)
+        r = res.setdefault(str(prof_id), {"modulos_semana": 0, "modulos_semestre": 0, "minutos_semestre": 0})
+        r["modulos_semana"] += 1
+        r["modulos_semestre"] += n_sem
+        r["minutos_semestre"] += minutos * n_sem
+    for r in res.values():
+        r["horas_semestre"] = round(r.pop("minutos_semestre") / 60, 1)
+    return res
 
 @app.get("/api/profesores/{profesor_id}/disponibilidad")
 def disponibilidad_profesor(

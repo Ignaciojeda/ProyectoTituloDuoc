@@ -12,10 +12,13 @@ const DIAS = [
   { key: 6, nombre: 'Sábado' },
 ]
 
+const SEMANAS_DEFAULT = 18
+
 // La ruta ya está restringida a coordinador y administrador (ProtectedRoute en App.jsx).
 export default function ProfesorDisponibilidadPage() {
   const [profesores, setProfesores] = useState([])
   const [resumen, setResumen] = useState({})
+  const [horas, setHoras] = useState({})
   const [bloques, setBloques] = useState([])
   const [busqueda, setBusqueda] = useState('')
   const [profId, setProfId] = useState('')
@@ -35,14 +38,16 @@ export default function ProfesorDisponibilidadPage() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [rp, rr, rb] = await Promise.all([
+        const [rp, rr, rb, rh] = await Promise.all([
           api.get('/profesores'),
           api.get('/profesores/disponibilidad'),
           api.get('/bloques-horario'),
+          api.get('/profesores/horas-semestre'),
         ])
         setProfesores(rp.data)
         setResumen(rr.data || {})
         setBloques(rb.data)
+        setHoras(rh.data || {})
       } catch (err) {
         setMensaje({ tipo: 'error', texto: 'No se pudieron cargar los datos.' })
       }
@@ -91,6 +96,7 @@ export default function ProfesorDisponibilidadPage() {
   const nombreDia = (k) => DIAS.find(d => d.key === k)?.nombre || `Día ${k}`
   const profActual = profesores.find(p => String(p.id) === String(profId))
   const nombreProf = profActual ? `${profActual.nombre} ${profActual.apellido}` : ''
+  const hProf = profActual ? horas[String(profActual.id)] : null
 
   // Clic en una celda: pregunta antes de agregar (o quitar) ese bloque
   const pedirConfirmacionCelda = (b) => {
@@ -198,6 +204,12 @@ export default function ProfesorDisponibilidadPage() {
           {profActual && (
             <div className="duoc-card" style={{ padding: '12px' }}>
               <h3 style={{ margin: '0 0 8px', color: 'var(--duoc-navy)' }}>{nombreProf}</h3>
+              <div style={{ fontSize: '13px', margin: '0 0 10px', padding: '6px 8px', background: '#f8f9fb', borderRadius: '6px' }}>
+                <strong>Carga del semestre ({SEMANAS_DEFAULT} semanas):</strong>{' '}
+                {hProf
+                  ? `${hProf.modulos_semestre} módulos · ${hProf.horas_semestre} h cronológicas (${hProf.modulos_semana} bloques programados)`
+                  : 'sin clases programadas en sinópticos'}
+                </div>
 
               <div style={{ display: 'flex', gap: '14px', fontSize: '11px', marginBottom: '8px', flexWrap: 'wrap' }}>
                 <span><span style={{ background: '#16a34a', padding: '0 8px' }}>&nbsp;</span> Disponible</span>
