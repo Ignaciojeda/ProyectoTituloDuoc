@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
 from zoneinfo import ZoneInfo
 from pdf_sinoptico import construir_pdf_sinoptico
 from excel_sinoptico import construir_excel_sinoptico
+from excel_sabana import construir_excel_sabana
 import io
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
@@ -1515,6 +1516,74 @@ def exportar_sinoptico_excel(
         headers={"Content-Disposition": f'attachment; filename="sinoptico_{sinoptico.id}.xlsx"'},
     )
 
+@app.get("/api/reportes/sabana")
+def reporte_sabana(
+    semestre_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Sábana de programación global (todos los sinópticos, una hoja por semestre). Solo coordinador y admin."""
+    consulta = (
+        db.query(
+            models.SinopticoItem, models.Sinoptico, models.Carrera, models.Semestre,
+            models.Asignatura, models.PlanEstudio, models.Profesor, models.Sala,
+            models.BloqueHorario, models.Jornada,
+        )
+        .join(models.Sinoptico, models.SinopticoItem.sinoptico_id == models.Sinoptico.id)
+        .join(models.Carrera, models.Sinoptico.carrera_id == models.Carrera.id)
+        .join(models.Semestre, models.Sinoptico.semestre_id == models.Semestre.id)
+        .join(models.Asignatura, models.SinopticoItem.asignatura_id == models.Asignatura.id)
+        .outerjoin(models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id)
+        .outerjoin(models.Profesor, models.SinopticoItem.profesor_id == models.Profesor.id)
+        .outerjoin(models.Sala, models.SinopticoItem.sala_id == models.Sala.id)
+        .join(models.BloqueHorario, models.SinopticoItem.bloque_horario_id == models.BloqueHorario.id)
+        .outerjoin(models.Jornada, models.SinopticoItem.jornada_id == models.Jornada.id)
+    )
+    if semestre_id is not None:
+        consulta = consulta.filter(models.Sinoptico.semestre_id == semestre_id)
+
+    formacion = {"teorica": "TEO", "practica": "PRA"}
+    items = []
+    for item, sin, carrera, semestre, asig, plan, prof, sala, bloque, jornada in consulta.all():
+        nom_jornada = jornada.nombre if jornada else bloque.jornada.value.capitalize()
+        items.append({
+            "sinoptico_id": sin.id,
+            "asignatura_id": asig.id,
+            "profesor_id": item.profesor_id,
+            "sala_id": item.sala_id,
+            "dia_semana": bloque.dia_semana,
+            "hora_inicio": bloque.hora_inicio,
+            "hora_fin": bloque.hora_fin,
+            "anio": semestre.anio,
+            "periodo": semestre.numero,
+            "cod_carrera": carrera.codigo,
+            "plan": plan.codigo if plan else None,
+            "escuela": carrera.nombre,
+            "cod_jornada": nom_jornada[:1].upper(),
+            "nom_jornada": nom_jornada,
+            "nivel": asig.nivel_semestral,
+            "id_seccion": item.id_seccion,
+            "seccion": item.seccion,
+            "nombre_seccion": f"{item.seccion or asig.codigo} {asig.nombre}",
+            "cod_asignatura": asig.codigo,
+            "nom_asignatura": asig.nombre,
+            "formacion": formacion.get(item.tipo),
+            "rut": getattr(prof, "rut", None) if prof else None,
+            "profesor": f"{prof.nombre} {prof.apellido}" if prof else None,
+            "sala": sala.nombre if sala else None,
+            "capacidad_sala": getattr(sala, "capacidad", None) if sala else None,
+            "duracion_horas": (asig.horas or 0) * SEMANAS_DEFAULT or None,
+            "fecha_inicio": item.fecha_inicio,
+            "fecha_final": item.fecha_final,
+            "capacidad_inicial": item.capacidad_inicial,
+        })
+
+    contenido = construir_excel_sabana(items)
+    return Response(
+        content=contenido,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="sabana_programacion.xlsx"'},
+    )
 
 @app.get("/api/salas/eventos")
 def eventos_todas_las_salas(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):

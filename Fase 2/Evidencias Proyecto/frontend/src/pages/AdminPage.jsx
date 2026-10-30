@@ -7,6 +7,19 @@ import '../duoc.css'
 export default function AdminPage() {
   const [stats, setStats] = useState({ usuarios: 0, carreras: 0, profesores: 0, sinopticos: 0 })
   const [loading, setLoading] = useState(true)
+  const descargarSabana = async () => {
+  try {
+    const { data } = await api.get('/reportes/sabana', { responseType: 'blob' })
+    const url = window.URL.createObjectURL(data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'sabana_programacion.xlsx'
+    a.click()
+    window.URL.revokeObjectURL(url)
+  } catch (err) {
+    alert('No se pudo generar la sábana.')
+  }
+}
 
   useEffect(() => {
     // Carga paralela de métricas generales para el panel
@@ -126,6 +139,19 @@ export default function AdminPage() {
           <Link to="/profesores/disponibilidad" className="duoc-btn-primary" style={{ textAlign: 'center', textDecoration: 'none', marginTop: '20px', boxSizing: 'border-box' }}>
             Ver y editar disponibilidad
           </Link>
+        </div>
+                <div className="duoc-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div>
+            <h3 style={{ margin: '0 0 12px 0', color: 'var(--duoc-navy)', fontSize: '18px' }}>
+              📊 Reportes
+            </h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
+              Descargue la sábana de programación con todos los sinópticos en un Excel, una hoja por semestre.
+            </p>
+          </div>
+          <button onClick={descargarSabana} className="duoc-btn-accent" style={{ textAlign: 'center', marginTop: '20px', boxSizing: 'border-box', cursor: 'pointer' }}>
+            Descargar sábana (Excel)
+          </button>
         </div>
       </div>
     </div>
