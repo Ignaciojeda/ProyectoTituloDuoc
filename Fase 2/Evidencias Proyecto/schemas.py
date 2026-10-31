@@ -121,6 +121,7 @@ class SinopticoOut(BaseModel):
     carrera_id: int
     semestre_id: int
     jornada: JornadaTipo
+    finalizado: bool
     creado_en: datetime
 
     class Config:

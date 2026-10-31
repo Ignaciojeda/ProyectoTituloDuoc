@@ -152,6 +152,7 @@ class Sinoptico(Base):
     carrera_id = Column(Integer, ForeignKey("carrera.id", ondelete="CASCADE"), nullable=False)
     semestre_id = Column(Integer, ForeignKey("semestre.id", ondelete="CASCADE"), nullable=False)
     jornada = Column(Enum(JornadaTipo), nullable=False, default=JornadaTipo.diurno)
+    finalizado = Column(Boolean, nullable=False, default=False, server_default="false")
     creado_en = Column(DateTime, server_default=func.now())
 
     carrera = relationship("Carrera")
