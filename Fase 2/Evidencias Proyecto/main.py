@@ -1233,6 +1233,7 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
             "plan_estudio_id": plan_id,
             "nivel_semestral": nivel,
             "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada),
+            "finalizado": sinoptico.finalizado,
             "creado_en": sinoptico.creado_en,
         })
     return resultado
@@ -1294,7 +1295,122 @@ def filtros_de_sinoptico(
         "semestre_id": sinoptico.semestre_id,
         "nivel_semestral": nivel,
         "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada),
+        "finalizado": sinoptico.finalizado,
     }
+
+
+def calcular_cumplimiento_horas(db: Session, sinoptico_id: int):
+    """
+    Horas requeridas de cada asignatura dentro del sinóptico = columna
+    'horas' de la tabla asignatura (horas semanales) x SEMANAS_DEFAULT (18
+    semanas del semestre).
+    Horas programadas = por cada bloque horario de esa asignatura en este
+    sinóptico, 1 hora x la cantidad de semanas en que se dicta ese bloque
+    (todas las semanas -18- si no se marcaron semanas específicas).
+    """
+    items = (
+        db.query(models.SinopticoItem.asignatura_id, models.SinopticoItem.semanas)
+        .filter(models.SinopticoItem.sinoptico_id == sinoptico_id)
+        .all()
+    )
+
+    horas_programadas = defaultdict(int)
+    for asignatura_id, semanas_txt in items:
+        lista = parse_semanas(semanas_txt)
+        n_semanas = len(lista) if lista else SEMANAS_DEFAULT
+        horas_programadas[asignatura_id] += n_semanas  # 1 hora por bloque por semana
+
+    if not horas_programadas:
+        return []
+
+    asignaturas = db.query(models.Asignatura).filter(
+        models.Asignatura.id.in_(horas_programadas.keys())
+    ).all()
+
+    resultado = []
+    for asig in asignaturas:
+        requeridas = (asig.horas or 0) * SEMANAS_DEFAULT
+        programadas = horas_programadas.get(asig.id, 0)
+        resultado.append({
+            "asignatura_id": asig.id,
+            "codigo": asig.codigo,
+            "nombre": asig.nombre,
+            "horas_semanales": asig.horas,
+            "horas_requeridas": requeridas,
+            "horas_programadas": programadas,
+            "cumple": programadas == requeridas,
+            "diferencia": requeridas - programadas,  # > 0 = faltan horas, < 0 = sobran horas
+        })
+    return sorted(resultado, key=lambda r: r["nombre"])
+
+
+@app.get("/api/sinopticos/{sinoptico_id}/horas")
+def horas_por_asignatura(
+    sinoptico_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
+    """
+    Horas requeridas vs. programadas de cada asignatura del sinóptico (18
+    semanas, 1 hora por bloque horario). Se usa para mostrar el avance al
+    seleccionar una asignatura y para validar el botón 'Finalizar sinóptico'.
+    """
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    return calcular_cumplimiento_horas(db, sinoptico_id)
+
+
+class FinalizadoUpdateRequest(BaseModel):
+    finalizado: bool
+
+
+@app.patch("/api/sinopticos/{sinoptico_id}/finalizado")
+def actualizar_finalizado_sinoptico(
+    sinoptico_id: int,
+    datos: FinalizadoUpdateRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(require_coordinador),
+):
+    """
+    Marca o desmarca un sinóptico como finalizado. Para poder marcarlo como
+    finalizado, TODAS las asignaturas que tiene programadas deben cumplir
+    exactamente las horas que exige la columna 'horas' de su asignatura
+    (18 semanas x 1 hora por bloque horario).
+    """
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+
+    if datos.finalizado and not sinoptico.finalizado:
+        resumen = calcular_cumplimiento_horas(db, sinoptico_id)
+        if not resumen:
+            raise HTTPException(
+                status_code=400,
+                detail="No se puede finalizar: el sinóptico todavía no tiene asignaturas programadas.",
+            )
+        incumplidas = [r for r in resumen if not r["cumple"]]
+        if incumplidas:
+            detalle = "; ".join(
+                f"{r['nombre']} ({r['horas_programadas']} de {r['horas_requeridas']} hrs)"
+                for r in incumplidas
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se puede finalizar: hay asignaturas que no cumplen sus horas -> {detalle}",
+            )
+
+    sinoptico.finalizado = datos.finalizado
+    registrar_cambio(
+        db, usuario,
+        "sinoptico_finalizado" if datos.finalizado else "sinoptico_reabierto",
+        "sinoptico",
+        "Finalizó el sinóptico" if datos.finalizado else "Reabrió el sinóptico (quitó finalizado)",
+        sinoptico_id=sinoptico_id,
+    )
+    db.commit()
+    db.refresh(sinoptico)
+    return {"ok": True, "finalizado": sinoptico.finalizado}
 
 
 @app.get("/api/sinopticos/eventos")

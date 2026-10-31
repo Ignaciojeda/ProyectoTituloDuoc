@@ -62,6 +62,11 @@ export default function SinopticoPage() {
   const [eventos, setEventos] = useState([])
   const [mensaje, setMensaje] = useState('')
 
+  // Estado "finalizado" del sinóptico abierto y horas requeridas/programadas por asignatura
+  const [finalizadoSel, setFinalizadoSel] = useState(false)
+  const [horasPorAsignatura, setHorasPorAsignatura] = useState([])
+  const [finalizando, setFinalizando] = useState(false)
+
   // Panel de edición de una clase (null = cerrado)
   const [itemEditando, setItemEditando] = useState(null)
 
@@ -215,6 +220,7 @@ export default function SinopticoPage() {
         // nivel: número = ese nivel; 0 = varios niveles ("Todos"); null = sinóptico vacío (no se toca)
         if (data.nivel_semestral === 0) setNivelSel('')
         else if (data.nivel_semestral) setNivelSel(String(data.nivel_semestral))
+        setFinalizadoSel(Boolean(data.finalizado))
       })
       .catch(err => console.error('No se pudieron rellenar los filtros del sinóptico:', err))
   }, [sinopticoSel])
@@ -234,6 +240,88 @@ export default function SinopticoPage() {
     } catch (err) {
       console.error('Error al cargar eventos:', err)
       setEventos([])
+    }
+    cargarHorasSinoptico(id)
+  }
+
+  // Horas requeridas vs. programadas (18 semanas, 1 hora por bloque) de cada
+  // asignatura que ya tiene clases en este sinóptico.
+  const cargarHorasSinoptico = async (id) => {
+    try {
+      const { data } = await api.get(`/sinopticos/${id}/horas`)
+      setHorasPorAsignatura(data)
+    } catch (err) {
+      console.error('Error al cargar las horas del sinóptico:', err)
+      setHorasPorAsignatura([])
+    }
+  }
+
+  // Info de horas (requeridas/programadas) para la asignatura seleccionada en un
+  // formulario. Si la asignatura todavía no tiene clases en este sinóptico, las
+  // horas requeridas se calculan igual (horas semanales x 18) y las programadas
+  // parten en 0.
+  const infoHorasAsignatura = (asignaturaId) => {
+    if (!asignaturaId) return null
+    const existente = horasPorAsignatura.find(h => String(h.asignatura_id) === String(asignaturaId))
+    if (existente) return existente
+    const asig = asignaturas.find(a => String(a.id) === String(asignaturaId))
+    if (!asig) return null
+    const requeridas = (asig.horas || 0) * TOTAL_SEMANAS
+    return {
+      horas_semanales: asig.horas,
+      horas_requeridas: requeridas,
+      horas_programadas: 0,
+      cumple: requeridas === 0,
+      diferencia: requeridas,
+    }
+  }
+
+  // Caja con el resumen de horas (requeridas/programadas) de la asignatura
+  // elegida en un formulario. null si todavía no hay asignatura seleccionada.
+  const renderInfoHoras = (asignaturaId) => {
+    const info = infoHorasAsignatura(asignaturaId)
+    if (!info) return null
+    const colorFondo = info.cumple ? '#dcfce7' : '#fef3c7'
+    const colorTexto = info.cumple ? '#15803d' : '#92400e'
+    return (
+      <div style={{
+        marginTop: '-4px', marginBottom: '10px', padding: '6px 8px', fontSize: '11px',
+        borderRadius: 'var(--radius-sm)', backgroundColor: colorFondo, color: colorTexto,
+      }}>
+        Horas: {info.horas_programadas} de {info.horas_requeridas} requeridas
+        {info.horas_semanales != null ? ` (${info.horas_semanales} hrs/semana × ${TOTAL_SEMANAS} semanas)` : ''}
+        {info.cumple
+          ? ' — Completo'
+          : info.diferencia > 0
+            ? ` — Faltan ${info.diferencia} hrs`
+            : ` — Sobran ${Math.abs(info.diferencia)} hrs`}
+      </div>
+    )
+  }
+
+  const handleFinalizarSinoptico = async () => {
+    if (!sinopticoSel) {
+      setMensaje('Primero seleccione un sinóptico de la lista.')
+      return
+    }
+    const nuevoValor = !finalizadoSel
+    if (nuevoValor) {
+      const confirmado = window.confirm(
+        `¿Finalizar el sinóptico #${sinopticoSel}? Se validará que todas sus asignaturas cumplan las horas requeridas.`
+      )
+      if (!confirmado) return
+    }
+    setFinalizando(true)
+    try {
+      const { data } = await api.patch(`/sinopticos/${sinopticoSel}/finalizado`, { finalizado: nuevoValor })
+      setFinalizadoSel(data.finalizado)
+      setMensaje(data.finalizado ? `Sinóptico #${sinopticoSel} finalizado.` : `Sinóptico #${sinopticoSel} reabierto.`)
+      const { data: lista } = await api.get('/sinopticos')
+      setSinopticosExistentes(lista)
+    } catch (err) {
+      window.alert(err.response?.data?.detail || 'No se pudo cambiar el estado de finalizado.')
+    } finally {
+      setFinalizando(false)
     }
   }
 
@@ -437,13 +525,14 @@ export default function SinopticoPage() {
       await api.delete(`/sinopticos/items/${clase.id}`)
       setEventos(prev => prev.filter(e => e.id !== clase.id))
       setMensaje('Bloque de horario eliminado.')
+      if (sinopticoSel) cargarHorasSinoptico(sinopticoSel)
     } catch (err) {
       setMensaje(err.response?.data?.detail || 'Error al eliminar el bloque.')
     }
   }
 
-  // --- Semanas en que se dicta la asignatura (1..17) ---
-  const TOTAL_SEMANAS = 17
+  // --- Semanas en que se dicta la asignatura (1..18) ---
+  const TOTAL_SEMANAS = 18
   const TODAS_LAS_SEMANAS = Array.from({ length: TOTAL_SEMANAS }, (_, i) => i + 1)
   const PRESETS_SEMANAS = [
     { nombre: 'Todas las semanas', semanas: TODAS_LAS_SEMANAS },
@@ -901,6 +990,35 @@ export default function SinopticoPage() {
               >
                 Agregar ramo manualmente
               </button>
+
+              {/* --- Finalizar sinóptico --- */}
+              <div style={{ marginTop: '14px', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                {sinopticoSel && (
+                  <div style={{
+                    marginBottom: '8px', padding: '6px 8px', fontSize: '11px', fontWeight: 700,
+                    borderRadius: 'var(--radius-sm)', textAlign: 'center',
+                    backgroundColor: finalizadoSel ? '#dcfce7' : '#fef9c3',
+                    color: finalizadoSel ? '#15803d' : '#854d0e',
+                  }}>
+                    {finalizadoSel ? '✓ Sinóptico finalizado' : 'Sinóptico en edición'}
+                  </div>
+                )}
+                <button
+                  onClick={handleFinalizarSinoptico}
+                  disabled={!sinopticoSel || finalizando}
+                  style={{
+                    padding: '7px 10px', fontSize: '12px', width: '100%', fontWeight: 600,
+                    border: 'none', borderRadius: 'var(--radius-sm)',
+                    backgroundColor: !sinopticoSel ? '#d1d5db' : finalizadoSel ? '#fff' : '#15803d',
+                    color: !sinopticoSel ? '#fff' : finalizadoSel ? '#15803d' : '#fff',
+                    boxShadow: finalizadoSel && sinopticoSel ? 'inset 0 0 0 1px #15803d' : 'none',
+                    cursor: !sinopticoSel || finalizando ? 'not-allowed' : 'pointer',
+                    opacity: finalizando ? 0.7 : 1,
+                  }}
+                >
+                  {finalizando ? 'Procesando...' : finalizadoSel ? 'Reabrir sinóptico' : 'Finalizar sinóptico'}
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -1097,6 +1215,7 @@ export default function SinopticoPage() {
                 {opcionesAsignaturas()}
               </select>
             </div>
+            {renderInfoHoras(itemEditando.asignatura_id)}
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>Sección (Sábana)</label>
@@ -1358,6 +1477,7 @@ export default function SinopticoPage() {
                 {opcionesAsignaturas()}
               </select>
             </div>
+            {renderInfoHoras(nuevoItem.asignatura_id)}
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>Bloque horario</label>
