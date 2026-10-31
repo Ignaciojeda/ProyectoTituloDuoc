@@ -962,6 +962,7 @@ def generar_sinoptico(
         sinoptico_existente = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
         if not sinoptico_existente:
             raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+        asegurar_sinoptico_editable(sinoptico_existente)
         # Carrera y jornada son las del sinóptico, no las del filtro
         datos.carrera_id = sinoptico_existente.carrera_id
         datos.jornada = sinoptico_existente.jornada
@@ -1297,6 +1298,20 @@ def filtros_de_sinoptico(
         "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada),
         "finalizado": sinoptico.finalizado,
     }
+
+
+def asegurar_sinoptico_editable(sinoptico: "models.Sinoptico"):
+    """
+    Bloquea cualquier alta/edición/baja de bloques sobre un sinóptico ya
+    finalizado. Hay que reabrirlo primero
+    (PATCH /sinopticos/{id}/finalizado con finalizado=false) para poder
+    volver a editarlo.
+    """
+    if sinoptico.finalizado:
+        raise HTTPException(
+            status_code=400,
+            detail="Este sinóptico está finalizado. Reábrelo antes de poder editarlo.",
+        )
 
 
 def calcular_cumplimiento_horas(db: Session, sinoptico_id: int):
@@ -1823,6 +1838,7 @@ def agregar_item_sinoptico(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    asegurar_sinoptico_editable(sinoptico)
 
     asignatura = db.query(models.Asignatura).filter(models.Asignatura.id == datos.asignatura_id).first()
     if not asignatura:
@@ -1906,6 +1922,9 @@ def editar_item_sinoptico(
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
+    asegurar_sinoptico_editable(sinoptico)
+
     bloque = db.query(models.BloqueHorario).filter(
         models.BloqueHorario.id == datos.bloque_horario_id
     ).first()
@@ -1930,7 +1949,6 @@ def editar_item_sinoptico(
         if choque_sala:
             raise HTTPException(status_code=409, detail="Esa sala ya está ocupada por otra clase en ese bloque horario.")
 
-    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
     sinoptico_jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada)
     jornada_para_item = bloque.jornada if sinoptico_jornada_val == "mixta" else sinoptico.jornada
 
@@ -1985,6 +2003,7 @@ def mover_item_sinoptico(
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
+    asegurar_sinoptico_editable(sinoptico)
     sinoptico_jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada)
 
     # Si el sinóptico es "mixto", el bloque se busca por día/hora sin exigir una
@@ -2066,6 +2085,11 @@ def actualizar_color_asignatura(
     Iguala el color de TODOS los bloques de una asignatura dentro de un mismo
     sinóptico (no afecta a esa asignatura en otros sinópticos).
     """
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    asegurar_sinoptico_editable(sinoptico)
+
     items = db.query(models.SinopticoItem).filter(
         models.SinopticoItem.sinoptico_id == sinoptico_id,
         models.SinopticoItem.asignatura_id == asignatura_id,
@@ -2101,6 +2125,11 @@ def actualizar_semanas_asignatura(
     (semanal, semana por medio, mensual, o las que se marquen a mano). Se aplica
     a TODOS los bloques de la asignatura en ese sinóptico.
     """
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    asegurar_sinoptico_editable(sinoptico)
+
     validas = sorted({w for w in datos.semanas if 1 <= w <= SEMANAS_DEFAULT})
     if not validas:
         raise HTTPException(status_code=400, detail="Debes marcar al menos una semana.")
@@ -2140,6 +2169,8 @@ def eliminar_item_sinoptico(
     item = db.query(models.SinopticoItem).filter(models.SinopticoItem.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
+    asegurar_sinoptico_editable(sinoptico)
     registrar_cambio(
         db, usuario, "bloque_eliminado", "sinoptico",
         f"Eliminó {nombre_asignatura(db, item.asignatura_id)} de {describir_bloque(db, item.bloque_horario_id)}",

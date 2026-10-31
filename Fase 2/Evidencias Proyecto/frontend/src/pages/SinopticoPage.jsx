@@ -298,18 +298,24 @@ export default function SinopticoPage() {
     )
   }
 
+  // Mensaje estándar cuando se intenta editar un sinóptico finalizado sin
+  // haberlo desbloqueado primero.
+  const avisarFinalizado = () => {
+    window.alert('Este sinóptico está finalizado y quedó bloqueado para edición. Usa el botón "Desbloquear para editar" y confirma para poder modificarlo de nuevo.')
+  }
+
   const handleFinalizarSinoptico = async () => {
     if (!sinopticoSel) {
       setMensaje('Primero seleccione un sinóptico de la lista.')
       return
     }
     const nuevoValor = !finalizadoSel
-    if (nuevoValor) {
-      const confirmado = window.confirm(
-        `¿Finalizar el sinóptico #${sinopticoSel}? Se validará que todas sus asignaturas cumplan las horas requeridas.`
-      )
-      if (!confirmado) return
-    }
+    const confirmado = window.confirm(
+      nuevoValor
+        ? `¿Finalizar el sinóptico #${sinopticoSel}? Se validará que todas sus asignaturas cumplan las horas requeridas y, mientras esté finalizado, quedará bloqueado para edición.`
+        : `¿Desbloquear el sinóptico #${sinopticoSel} para editarlo? Dejará de estar marcado como finalizado hasta que lo vuelvas a finalizar.`
+    )
+    if (!confirmado) return
     setFinalizando(true)
     try {
       const { data } = await api.patch(`/sinopticos/${sinopticoSel}/finalizado`, { finalizado: nuevoValor })
@@ -329,6 +335,7 @@ export default function SinopticoPage() {
       setMensaje('Debe seleccionar plan de estudio y semestre.')
       return
     }
+    if (sinopticoSel && finalizadoSel) { avisarFinalizado(); return }
     // Si hay un sinóptico seleccionado, se ofrece generar DENTRO de él en vez de crear otro
     let rellenarId = null
     if (sinopticoSel) {
@@ -515,6 +522,7 @@ export default function SinopticoPage() {
   }
 
   const handleEliminarBloque = async (clase) => {
+    if (finalizadoSel) { avisarFinalizado(); return }
     const confirmado = window.confirm(
       `¿Está seguro de que desea eliminar el bloque "${clase.title}"? Esta acción no se puede deshacer.`
     )
@@ -580,6 +588,7 @@ export default function SinopticoPage() {
   const cerrarEditorBloque = () => setItemEditando(null)
 
   const guardarEdicionBloque = async () => {
+    if (finalizadoSel) { avisarFinalizado(); return }
     if (!itemEditando.asignatura_id || !itemEditando.bloque_horario_id) {
       window.alert('Debe seleccionar al menos la asignatura y el bloque horario.')
       return
@@ -661,6 +670,7 @@ export default function SinopticoPage() {
       setMensaje('Primero seleccione un sinóptico existente.')
       return
     }
+    if (finalizadoSel) { avisarFinalizado(); return }
     setNuevoItem({
       asignatura_id: '',
       profesor_id: '',
@@ -685,6 +695,7 @@ export default function SinopticoPage() {
       setMensaje('Primero seleccione un sinóptico existente.')
       return
     }
+    if (finalizadoSel) { avisarFinalizado(); return }
 
     const horaIni = moduloLabel.split(' A ')[0]
     const candidatos = bloquesHorario.filter(
@@ -714,6 +725,7 @@ export default function SinopticoPage() {
   }
 
   const guardarNuevoItem = async () => {
+    if (finalizadoSel) { avisarFinalizado(); return }
     if (!nuevoItem.asignatura_id || !nuevoItem.bloque_horario_id) {
       window.alert('Debe seleccionar al menos la asignatura y el bloque horario.')
       return
@@ -774,6 +786,7 @@ export default function SinopticoPage() {
 
   const handleDrop = async (e, nuevoDiaKey, nuevoModuloLabel) => {
     e.preventDefault()
+    if (finalizadoSel) { avisarFinalizado(); return }
     const claseId = parseInt(e.dataTransfer.getData('claseId'))
     const clase = eventos.find(ev => ev.id === claseId)
     if (!clase) return
@@ -902,7 +915,16 @@ export default function SinopticoPage() {
             </div>
 
             <div style={{ display: 'flex', gap: '6px' }}>
-              <button onClick={handleGenerarAuto} className="duoc-btn-primary" style={{ marginTop: '2px', padding: '7px 10px', fontSize: '12px', flex: 1 }}>
+              <button
+                onClick={handleGenerarAuto}
+                disabled={Boolean(sinopticoSel) && finalizadoSel}
+                className="duoc-btn-primary"
+                style={{
+                  marginTop: '2px', padding: '7px 10px', fontSize: '12px', flex: 1,
+                  opacity: sinopticoSel && finalizadoSel ? 0.6 : 1,
+                  cursor: sinopticoSel && finalizadoSel ? 'not-allowed' : 'pointer',
+                }}
+              >
                 Generar automáticamente
               </button>
             </div>
@@ -984,8 +1006,13 @@ export default function SinopticoPage() {
 
               <button
                 onClick={abrirFormularioNuevo}
+                disabled={!sinopticoSel || finalizadoSel}
                 className="duoc-btn-primary"
-                style={{ marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%' }}
+                style={{
+                  marginTop: '8px', padding: '7px 10px', fontSize: '12px', width: '100%',
+                  opacity: !sinopticoSel || finalizadoSel ? 0.6 : 1,
+                  cursor: !sinopticoSel || finalizadoSel ? 'not-allowed' : 'pointer',
+                }}
               >
                 Agregar ramo manualmente
               </button>
@@ -1015,7 +1042,7 @@ export default function SinopticoPage() {
                     opacity: finalizando ? 0.7 : 1,
                   }}
                 >
-                  {finalizando ? 'Procesando...' : finalizadoSel ? 'Reabrir sinóptico' : 'Finalizar sinóptico'}
+                  {finalizando ? 'Procesando...' : finalizadoSel ? 'Desbloquear para editar' : 'Finalizar sinóptico'}
                 </button>
               </div>
             </div>
@@ -1035,13 +1062,36 @@ export default function SinopticoPage() {
 
         {/* TABLA HORARIO COMPACTA */}
         <div className="duoc-card" style={{ flex: 1, padding: '12px', overflowX: 'auto' }}>
+          {sinopticoSel && finalizadoSel && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+              marginBottom: '10px', padding: '8px 12px', borderRadius: 'var(--radius-sm)',
+              backgroundColor: '#fef3c7', border: '1px solid #f3cf7a', color: '#854d0e', fontSize: '12px',
+            }}>
+              <span>🔒 Este sinóptico está <strong>finalizado</strong> y quedó bloqueado para edición. Para modificarlo debes desbloquearlo primero.</span>
+              <button
+                onClick={handleFinalizarSinoptico}
+                disabled={finalizando}
+                style={{
+                  padding: '5px 10px', fontSize: '11px', fontWeight: 700, border: '1px solid #854d0e',
+                  borderRadius: 'var(--radius-sm)', background: '#fff', color: '#854d0e',
+                  cursor: finalizando ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                Desbloquear para editar
+              </button>
+            </div>
+          )}
           <div style={{ marginBottom: '8px', borderBottom: '2px solid var(--duoc-navy)', paddingBottom: '4px' }}>
             <h3 style={{ margin: 0, color: 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800' }}>
               BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES
             </h3>
             <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
               Jornada: {jornadaSel.charAt(0).toUpperCase() + jornadaSel.slice(1)}
-              {nivelSel ? ` · Nivel: ${nivelSel}°` : ''} · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario
+              {nivelSel ? ` · Nivel: ${nivelSel}°` : ''}
+              {finalizadoSel
+                ? ' · Sinóptico finalizado: bloqueado para edición'
+                : ' · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario'}
             </span>
           </div>
 
@@ -1076,16 +1126,16 @@ export default function SinopticoPage() {
                         onDragOver={handleDragOver}
                         onDrop={(e) => handleDrop(e, d.key, m.label)}
                         onClick={() => { if (!clase) abrirNuevoEnCelda(d.key, m.label) }}
-                        style={{ padding: '1px 2px', border: '1px solid #cbd5e1', verticalAlign: 'middle', height: '24px', cursor: clase ? 'default' : 'pointer', position: 'relative', transition: 'background-color 0.15s ease' }}
+                        style={{ padding: '1px 2px', border: '1px solid #cbd5e1', verticalAlign: 'middle', height: '24px', cursor: clase ? 'default' : (finalizadoSel ? 'not-allowed' : 'pointer'), position: 'relative', transition: 'background-color 0.15s ease' }}
                         onMouseEnter={(e) => {
-                          if (!clase) {
+                          if (!clase && !finalizadoSel) {
                             e.currentTarget.style.backgroundColor = '#eef6ff'
                             const plus = e.currentTarget.querySelector('.celda-plus')
                             if (plus) plus.style.opacity = '1'
                           }
                         }}
                         onMouseLeave={(e) => {
-                          if (!clase) {
+                          if (!clase && !finalizadoSel) {
                             e.currentTarget.style.backgroundColor = ''
                             const plus = e.currentTarget.querySelector('.celda-plus')
                             if (plus) plus.style.opacity = '0'
@@ -1094,14 +1144,14 @@ export default function SinopticoPage() {
                       >
                         {clase ? (
                           <div
-                            draggable
+                            draggable={!finalizadoSel}
                             onDragStart={(e) => handleDragStart(e, clase)}
                             style={{
                               backgroundColor: colorBloque,
                               border: '1px solid rgba(0,0,0,0.18)',
                               padding: '1px 4px',
                               borderRadius: '2px',
-                              cursor: 'grab',
+                              cursor: finalizadoSel ? 'default' : 'grab',
                               userSelect: 'none',
                               lineHeight: '1.1',
                               position: 'relative',
@@ -1127,25 +1177,27 @@ export default function SinopticoPage() {
                               >
                                 ✎
                               </button>
-                              <button
-                                onClick={() => handleEliminarBloque(clase)}
-                                title="Eliminar este bloque"
-                                style={{
-                                  border: '1px solid rgba(0,0,0,0.25)',
-                                  background: '#fff',
-                                  color: '#b02a2a',
-                                  borderRadius: '50%',
-                                  width: '12px',
-                                  height: '12px',
-                                  fontSize: '9px',
-                                  lineHeight: '12px',
-                                  textAlign: 'center',
-                                  cursor: 'pointer',
-                                  padding: 0,
-                                }}
-                              >
-                                ×
-                              </button>
+                              {!finalizadoSel && (
+                                <button
+                                  onClick={() => handleEliminarBloque(clase)}
+                                  title="Eliminar este bloque"
+                                  style={{
+                                    border: '1px solid rgba(0,0,0,0.25)',
+                                    background: '#fff',
+                                    color: '#b02a2a',
+                                    borderRadius: '50%',
+                                    width: '12px',
+                                    height: '12px',
+                                    fontSize: '9px',
+                                    lineHeight: '12px',
+                                    textAlign: 'center',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              )}
                             </div>
                             <div style={{ fontWeight: 'bold', color: colorTexto, fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {clase.title}

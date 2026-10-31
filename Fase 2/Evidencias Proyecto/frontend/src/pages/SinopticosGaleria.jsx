@@ -37,6 +37,10 @@ export default function SinopticosGaleria() {
   const [eventosPorSinoptico, setEventosPorSinoptico] = useState({})
   const [cargando, setCargando] = useState(true)
 
+  // Filtros: por carrera y por estado (todos / finalizados / por finalizar)
+  const [carreraFiltro, setCarreraFiltro] = useState('')
+  const [estadoFiltro, setEstadoFiltro] = useState('todos')
+
   useEffect(() => {
     const cargarTodo = async () => {
       try {
@@ -59,8 +63,32 @@ export default function SinopticosGaleria() {
     cargarTodo()
   }, [])
 
-  // Agrupa los sinópticos por nombre de carrera
-  const porCarrera = sinopticos.reduce((acc, s) => {
+  // Carreras disponibles para el selector de filtro (únicas, ordenadas)
+  const carrerasDisponibles = Object.values(
+    sinopticos.reduce((acc, s) => {
+      acc[s.carrera_id] = { id: s.carrera_id, nombre: s.carrera }
+      return acc
+    }, {})
+  ).sort((a, b) => a.nombre.localeCompare(b.nombre))
+
+  // Sinópticos ya filtrados por carrera (para que los contadores de estado
+  // reflejen la carrera elegida, si hay alguna elegida)
+  const sinopticosPorCarrera = carreraFiltro
+    ? sinopticos.filter(s => String(s.carrera_id) === String(carreraFiltro))
+    : sinopticos
+
+  const totalFinalizados = sinopticosPorCarrera.filter(s => s.finalizado).length
+  const totalPorFinalizar = sinopticosPorCarrera.filter(s => !s.finalizado).length
+
+  // Lista final que se agrupa y se muestra, aplicando además el filtro de estado
+  const sinopticosFiltrados = sinopticosPorCarrera.filter(s => {
+    if (estadoFiltro === 'finalizados') return s.finalizado
+    if (estadoFiltro === 'pendientes') return !s.finalizado
+    return true
+  })
+
+  // Agrupa los sinópticos (ya filtrados) por nombre de carrera
+  const porCarrera = sinopticosFiltrados.reduce((acc, s) => {
     if (!acc[s.carrera]) acc[s.carrera] = []
     acc[s.carrera].push(s)
     return acc
@@ -97,6 +125,67 @@ export default function SinopticosGaleria() {
           <p style={{ color: 'var(--text-muted)' }}>Todavía no hay sinópticos generados.</p>
         )}
 
+        {!cargando && sinopticos.length > 0 && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end',
+            marginBottom: '20px', padding: '12px 14px', backgroundColor: '#fff',
+            border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
+          }}>
+            {/* Filtro por carrera */}
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--duoc-navy)', marginBottom: '4px' }}>
+                Carrera
+              </label>
+              <select
+                className="duoc-select"
+                value={carreraFiltro}
+                onChange={e => setCarreraFiltro(e.target.value)}
+                style={{ padding: '6px 10px', fontSize: '12px', minWidth: '220px' }}
+              >
+                <option value="">Todas las carreras</option>
+                {carrerasDisponibles.map(c => (
+                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Aparte: estado (finalizados / por finalizar) */}
+            <div>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--duoc-navy)', marginBottom: '4px' }}>
+                Estado
+              </label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {[
+                  { key: 'todos', label: 'Todos', cuenta: sinopticosPorCarrera.length },
+                  { key: 'finalizados', label: '✓ Finalizados', cuenta: totalFinalizados },
+                  { key: 'pendientes', label: 'Por finalizar', cuenta: totalPorFinalizar },
+                ].map(op => {
+                  const activo = estadoFiltro === op.key
+                  return (
+                    <button
+                      key={op.key}
+                      onClick={() => setEstadoFiltro(op.key)}
+                      style={{
+                        padding: '6px 10px', fontSize: '12px', fontWeight: 700,
+                        borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                        border: activo ? '1px solid var(--duoc-navy)' : '1px solid #cbd5e1',
+                        backgroundColor: activo ? 'var(--duoc-navy)' : '#fff',
+                        color: activo ? '#fff' : 'var(--text-muted)',
+                      }}
+                    >
+                      {op.label} ({op.cuenta})
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!cargando && sinopticos.length > 0 && sinopticosFiltrados.length === 0 && (
+          <p style={{ color: 'var(--text-muted)' }}>No hay sinópticos que calcen con ese filtro.</p>
+        )}
+
         {Object.entries(porCarrera).map(([carrera, lista]) => (
           <div key={carrera} style={{ marginBottom: '26px' }}>
             <h3 style={{ color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px', fontSize: '15px' }}>
@@ -108,8 +197,18 @@ export default function SinopticosGaleria() {
                 const eventos = eventosPorSinoptico[String(s.id)] || []
                 return (
                   <div key={s.id} className="duoc-card" style={{ width: '220px', padding: '10px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>
-                      #{s.id} - {s.semestre}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>
+                        #{s.id} - {s.semestre}
+                      </div>
+                      <span style={{
+                        fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '10px',
+                        backgroundColor: s.finalizado ? '#dcfce7' : '#fef9c3',
+                        color: s.finalizado ? '#15803d' : '#854d0e',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {s.finalizado ? '✓ Finalizado' : 'Por finalizar'}
+                      </span>
                     </div>
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '8px' }}>
                       {eventos.length} clase{eventos.length !== 1 ? 's' : ''} asignada{eventos.length !== 1 ? 's' : ''}
