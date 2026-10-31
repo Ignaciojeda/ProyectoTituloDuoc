@@ -1301,12 +1301,14 @@ def filtros_de_sinoptico(
 
 def calcular_cumplimiento_horas(db: Session, sinoptico_id: int):
     """
-    Horas requeridas de cada asignatura dentro del sinóptico = columna
-    'horas' de la tabla asignatura (horas semanales) x SEMANAS_DEFAULT (18
-    semanas del semestre).
-    Horas programadas = por cada bloque horario de esa asignatura en este
-    sinóptico, 1 hora x la cantidad de semanas en que se dicta ese bloque
-    (todas las semanas -18- si no se marcaron semanas específicas).
+    Horas requeridas de cada asignatura = columna 'horas' de la tabla
+    asignatura TAL CUAL (ya es el total de horas que exige el ramo; no se
+    multiplica por nada).
+    Horas programadas = lo que arma el SINÓPTICO: por cada bloque horario de
+    esa asignatura, 1 hora x la cantidad de semanas en que se dicta ese
+    bloque (todas las semanas -18, SEMANAS_DEFAULT- si no se marcaron
+    semanas específicas). Es este lado el que se multiplica por las semanas,
+    no las horas de la asignatura.
     """
     items = (
         db.query(models.SinopticoItem.asignatura_id, models.SinopticoItem.semanas)
@@ -1329,13 +1331,12 @@ def calcular_cumplimiento_horas(db: Session, sinoptico_id: int):
 
     resultado = []
     for asig in asignaturas:
-        requeridas = (asig.horas or 0) * SEMANAS_DEFAULT
+        requeridas = asig.horas or 0
         programadas = horas_programadas.get(asig.id, 0)
         resultado.append({
             "asignatura_id": asig.id,
             "codigo": asig.codigo,
             "nombre": asig.nombre,
-            "horas_semanales": asig.horas,
             "horas_requeridas": requeridas,
             "horas_programadas": programadas,
             "cumple": programadas == requeridas,

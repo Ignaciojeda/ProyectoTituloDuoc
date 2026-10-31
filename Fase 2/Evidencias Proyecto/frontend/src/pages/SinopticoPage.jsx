@@ -257,18 +257,17 @@ export default function SinopticoPage() {
   }
 
   // Info de horas (requeridas/programadas) para la asignatura seleccionada en un
-  // formulario. Si la asignatura todavía no tiene clases en este sinóptico, las
-  // horas requeridas se calculan igual (horas semanales x 18) y las programadas
-  // parten en 0.
+  // formulario. "Requeridas" es la columna 'horas' de la asignatura TAL CUAL
+  // (ya es el total del ramo, no se multiplica por nada). Si la asignatura
+  // todavía no tiene clases en este sinóptico, las programadas parten en 0.
   const infoHorasAsignatura = (asignaturaId) => {
     if (!asignaturaId) return null
     const existente = horasPorAsignatura.find(h => String(h.asignatura_id) === String(asignaturaId))
     if (existente) return existente
     const asig = asignaturas.find(a => String(a.id) === String(asignaturaId))
     if (!asig) return null
-    const requeridas = (asig.horas || 0) * TOTAL_SEMANAS
+    const requeridas = asig.horas || 0
     return {
-      horas_semanales: asig.horas,
       horas_requeridas: requeridas,
       horas_programadas: 0,
       cumple: requeridas === 0,
@@ -278,6 +277,7 @@ export default function SinopticoPage() {
 
   // Caja con el resumen de horas (requeridas/programadas) de la asignatura
   // elegida en un formulario. null si todavía no hay asignatura seleccionada.
+  // Las "programadas" sí son bloques del sinóptico x semanas en que se dictan.
   const renderInfoHoras = (asignaturaId) => {
     const info = infoHorasAsignatura(asignaturaId)
     if (!info) return null
@@ -288,8 +288,7 @@ export default function SinopticoPage() {
         marginTop: '-4px', marginBottom: '10px', padding: '6px 8px', fontSize: '11px',
         borderRadius: 'var(--radius-sm)', backgroundColor: colorFondo, color: colorTexto,
       }}>
-        Horas: {info.horas_programadas} de {info.horas_requeridas} requeridas
-        {info.horas_semanales != null ? ` (${info.horas_semanales} hrs/semana × ${TOTAL_SEMANAS} semanas)` : ''}
+        Horas: {info.horas_programadas} de {info.horas_requeridas} requeridas (programado según los bloques del sinóptico × semanas en que se dictan)
         {info.cumple
           ? ' — Completo'
           : info.diferencia > 0
