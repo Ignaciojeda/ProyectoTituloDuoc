@@ -166,10 +166,19 @@ def sesiones_por_semana(asignatura):
     horas = getattr(asignatura, "horas", None) or 4
     return max(1, min(4, int(-(-horas // 2))))  # horas/2 redondeado hacia arriba, entre 1 y 4
 
+def modulos_semanales(asignatura):
+    """`horas` en la BD = horas totales del semestre (36, 54, 72... = módulos por semana x 18)."""
+    horas = getattr(asignatura, "horas", None) or 0
+    if horas >= SEMANAS_DEFAULT:
+        n = round(horas / SEMANAS_DEFAULT)
+    else:
+        n = horas or 4  # menos de 18: se asume que ya viene por semana (hay que revisar esos ramos)
+    return max(1, min(8, int(n)))
+
+
 def tamanos_sesiones(asignatura):
-    """Módulos de cada sesión semanal. Ej: horas=3 -> [2, 1], horas=4 -> [2, 2], horas=1 -> [1]"""
-    horas = getattr(asignatura, "horas", None) or 4
-    horas = max(1, min(8, int(horas)))
+    """Módulos de cada sesión semanal. Ej: 4 -> [2, 2], 3 -> [2, 1], 5 -> [2, 2, 1]"""
+    horas = modulos_semanales(asignatura)
     tamanos = [2] * (horas // 2)
     if horas % 2:
         tamanos.append(1)
@@ -1704,7 +1713,7 @@ def reporte_sabana(
             "profesor": f"{prof.nombre} {prof.apellido}" if prof else None,
             "sala": sala.nombre if sala else None,
             "capacidad_sala": getattr(sala, "capacidad", None) if sala else None,
-            "duracion_horas": (asig.horas or 0) * SEMANAS_DEFAULT or None,
+            "duracion_horas": asig.horas or None,
             "fecha_inicio": item.fecha_inicio,
             "fecha_final": item.fecha_final,
             "capacidad_inicial": item.capacidad_inicial,
