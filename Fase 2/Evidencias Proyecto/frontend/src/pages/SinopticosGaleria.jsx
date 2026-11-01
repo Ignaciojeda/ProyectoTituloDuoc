@@ -63,18 +63,22 @@ export default function SinopticosGaleria() {
     cargarTodo()
   }, [])
 
-  // Carreras disponibles para el selector de filtro (únicas, ordenadas)
+  // Carreras disponibles para el selector de filtro: únicas por NOMBRE (aunque
+  // por debajo haya varios carrera_id/código distintos para el mismo nombre
+  // -p.ej. diurno/vespertino-, el filtro las trata como un solo conjunto).
   const carrerasDisponibles = Object.values(
     sinopticos.reduce((acc, s) => {
-      acc[s.carrera_id] = { id: s.carrera_id, nombre: s.carrera }
+      if (!acc[s.carrera]) acc[s.carrera] = { nombre: s.carrera, codigos: new Set() }
+      acc[s.carrera].codigos.add(s.codigo_carrera)
       return acc
     }, {})
   ).sort((a, b) => a.nombre.localeCompare(b.nombre))
 
   // Sinópticos ya filtrados por carrera (para que los contadores de estado
-  // reflejen la carrera elegida, si hay alguna elegida)
+  // reflejen la carrera elegida, si hay alguna elegida). El filtro es por
+  // NOMBRE, así que agrupa todos los carrera_id que compartan ese nombre.
   const sinopticosPorCarrera = carreraFiltro
-    ? sinopticos.filter(s => String(s.carrera_id) === String(carreraFiltro))
+    ? sinopticos.filter(s => s.carrera === carreraFiltro)
     : sinopticos
 
   const totalFinalizados = sinopticosPorCarrera.filter(s => s.finalizado).length
@@ -87,12 +91,18 @@ export default function SinopticosGaleria() {
     return true
   })
 
-  // Agrupa los sinópticos (ya filtrados) por nombre de carrera
+  // Agrupa los sinópticos (ya filtrados) por NOMBRE de carrera -no por
+  // carrera_id-, para que las distintas variantes (distinto código, misma
+  // carrera) aparezcan juntas en una sola sección.
   const porCarrera = sinopticosFiltrados.reduce((acc, s) => {
-    if (!acc[s.carrera]) acc[s.carrera] = []
-    acc[s.carrera].push(s)
+    if (!acc[s.carrera]) acc[s.carrera] = { nombre: s.carrera, lista: [] }
+    acc[s.carrera].lista.push(s)
     return acc
   }, {})
+
+  const gruposCarrera = Object.entries(porCarrera).sort(([, a], [, b]) =>
+    a.nombre.localeCompare(b.nombre)
+  )
 
   const celdaOcupada = (eventos, diaKey, horaInicioLabel) => {
     const horaMatch = horaInicioLabel.split(' A ')[0]
@@ -144,7 +154,7 @@ export default function SinopticosGaleria() {
               >
                 <option value="">Todas las carreras</option>
                 {carrerasDisponibles.map(c => (
-                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                  <option key={c.nombre} value={c.nombre}>{c.nombre}</option>
                 ))}
               </select>
             </div>
@@ -186,14 +196,14 @@ export default function SinopticosGaleria() {
           <p style={{ color: 'var(--text-muted)' }}>No hay sinópticos que calcen con ese filtro.</p>
         )}
 
-        {Object.entries(porCarrera).map(([carrera, lista]) => (
-          <div key={carrera} style={{ marginBottom: '26px' }}>
+        {gruposCarrera.map(([carreraId, grupo]) => (
+          <div key={carreraId} style={{ marginBottom: '26px' }}>
             <h3 style={{ color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px', fontSize: '15px' }}>
-              {carrera}
+              {grupo.nombre}
             </h3>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', marginTop: '10px' }}>
-              {lista.map(s => {
+              {grupo.lista.map(s => {
                 const eventos = eventosPorSinoptico[String(s.id)] || []
                 return (
                   <div key={s.id} className="duoc-card" style={{ width: '220px', padding: '10px' }}>
@@ -212,6 +222,7 @@ export default function SinopticosGaleria() {
                     </div>
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '8px' }}>
                       {eventos.length} clase{eventos.length !== 1 ? 's' : ''} asignada{eventos.length !== 1 ? 's' : ''}
+                      {' · '}{s.codigo_carrera}
                     </div>
 
                     {/* Mini previsualización: un cuadradito por módulo/día, relleno si está ocupado */}
