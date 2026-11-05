@@ -34,6 +34,7 @@ export default function DocenteHorarioPage() {
   const [eventos, setEventos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  const [hover, setHover] = useState(null)
 
   useEffect(() => {
     api.get('/docente/mi-horario')
@@ -90,7 +91,17 @@ export default function DocenteHorarioPage() {
                     {DIAS_SEMANA.map(d => {
                       const c = claseEn(d.key, m.label)
                       return (
-                        <td key={d.key} style={{ border: '1px solid #fff', backgroundColor: c ? colorValido(c.extendedProps?.color) : '#f3f5f8', height: '44px', padding: '3px 5px', verticalAlign: 'top' }}>
+                        <td
+                          key={d.key}
+                          onMouseEnter={() => c && setHover(c.title)}
+                          onMouseLeave={() => setHover(null)}
+                          style={{
+                            border: '1px solid #fff',
+                            backgroundColor: c ? colorValido(c.extendedProps?.color) : '#f3f5f8',
+                            height: '44px', padding: '3px 5px', verticalAlign: 'top',
+                            opacity: hover && (!c || c.title !== hover) ? 0.25 : 1,
+                            transition: 'opacity 0.15s',
+                          }}>
                           {c && (
                             <div style={{ fontSize: '11px', lineHeight: 1.25, color: '#111' }}>
                               <strong>{c.title}</strong>
