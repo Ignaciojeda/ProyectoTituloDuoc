@@ -34,16 +34,21 @@ export default function ProfesorDisponibilidadPage() {
   const [motivo, setMotivo] = useState('')
   const [historial, setHistorial] = useState([])
   const [errorForm, setErrorForm] = useState('')
+  // Jornada de cada profesor según sus bloques disponibles: { id: 'diurno' | 'vespertino' | 'mixto' } (sin entrada = sin horario)
+  const [jornadas, setJornadas] = useState({})
+  const [filtroJornada, setFiltroJornada] = useState('todos')
 
   useEffect(() => {
     const init = async () => {
       try {
-        const [rp, rr, rb, rh] = await Promise.all([
+        const [rp, rr, rb, rh, rj] = await Promise.all([
           api.get('/profesores'),
           api.get('/profesores/disponibilidad'),
           api.get('/bloques-horario'),
           api.get('/profesores/horas-semestre'),
+          api.get('/profesores/jornadas').catch(() => ({ data: {} })),
         ])
+        setJornadas(rj.data || {})
         setProfesores(rp.data)
         setResumen(rr.data || {})
         setBloques(rb.data)
@@ -54,6 +59,15 @@ export default function ProfesorDisponibilidadPage() {
     }
     init()
   }, [])
+
+  const recargarJornadas = async () => {
+    try {
+      const { data } = await api.get('/profesores/jornadas')
+      setJornadas(data || {})
+    } catch (err) {
+      // el filtro queda con la última información conocida
+    }
+  }
 
   const cargarHistorial = async (id) => {
     try {
@@ -147,6 +161,7 @@ export default function ProfesorDisponibilidadPage() {
       setMedio('')
       setMotivo('')
       cargarHistorial(profId)
+      recargarJornadas()
     } catch (err) {
       setMensaje({ tipo: 'error', texto: err.response?.data?.detail || 'Error al guardar el cambio.' })
       setPendiente(null)
@@ -155,9 +170,23 @@ export default function ProfesorDisponibilidadPage() {
     }
   }
 
+  const jornadaDe = (p) => jornadas[String(p.id)] || 'sin_horario'
+
+  const FILTROS = [
+    { key: 'todos', texto: 'Todos' },
+    { key: 'diurno', texto: 'Diurnos' },
+    { key: 'vespertino', texto: 'Vespertinos' },
+    { key: 'mixto', texto: 'Mixtos' },
+    { key: 'sin_horario', texto: 'Sin horario' },
+  ]
+  const contar = (key) => key === 'todos' ? profesores.length : profesores.filter(p => jornadaDe(p) === key).length
+
   const filtrados = profesores.filter(p =>
-    `${p.nombre} ${p.apellido}`.toLowerCase().includes(busqueda.toLowerCase())
+    `${p.nombre} ${p.apellido}`.toLowerCase().includes(busqueda.toLowerCase()) &&
+    (filtroJornada === 'todos' || jornadaDe(p) === filtroJornada)
   )
+
+  const ETIQUETA_JORNADA = { diurno: 'D', vespertino: 'V', mixto: 'D+V' }
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-main)' }}>
@@ -172,6 +201,26 @@ export default function ProfesorDisponibilidadPage() {
             onChange={e => setBusqueda(e.target.value)}
             style={{ width: '100%', padding: '6px', marginBottom: '8px', boxSizing: 'border-box' }}
           />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '8px' }}>
+            {FILTROS.map(f => {
+              const activo = filtroJornada === f.key
+              return (
+                <button
+                  key={f.key}
+                  onClick={() => setFiltroJornada(f.key)}
+                  style={{
+                    padding: '3px 8px', fontSize: '11px', cursor: 'pointer', borderRadius: '12px',
+                    border: '1px solid var(--duoc-navy)',
+                    background: activo ? 'var(--duoc-navy)' : '#fff',
+                    color: activo ? '#fff' : 'var(--duoc-navy)',
+                    fontWeight: activo ? 'bold' : 'normal',
+                  }}
+                >
+                  {f.texto} ({contar(f.key)})
+                </button>
+              )
+            })}
+          </div>
           <div style={{ maxHeight: '70vh', overflowY: 'auto' }}>
             {filtrados.map(p => {
               const total = resumen[String(p.id)] || 0
@@ -186,7 +235,14 @@ export default function ProfesorDisponibilidadPage() {
                     display: 'flex', justifyContent: 'space-between', gap: '8px',
                   }}
                 >
-                  <span>{p.nombre} {p.apellido}</span>
+                  <span>
+                    {p.nombre} {p.apellido}
+                    {ETIQUETA_JORNADA[jornadaDe(p)] && (
+                      <span style={{ marginLeft: '6px', fontSize: '9px', padding: '1px 4px', borderRadius: '8px', background: '#e0e7ff', color: '#1e3a8a' }}>
+                        {ETIQUETA_JORNADA[jornadaDe(p)]}
+                      </span>
+                    )}
+                  </span>
                   <span style={{ color: total ? '#15803d' : '#b45309', fontWeight: 'bold' }}>
                     {total ? `${total} bl.` : 'sin horario'}
                   </span>

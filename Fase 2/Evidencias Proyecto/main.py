@@ -558,6 +558,46 @@ async def subir_disponibilidad_docente(
             detail=f"Error al procesar la disponibilidad: {str(e)}"
         )
 
+@app.get("/api/profesores/jornadas")
+def jornadas_profesores(
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_docente),
+):
+    """
+    Jornada de cada profesor según los bloques en que está disponible:
+      'diurno', 'vespertino' o 'mixto' (tiene ambos). Sin entrada = sin horario cargado.
+    Los bloques del sábado no cuentan para decidir 'mixto' (el sábado en la mañana es diurno,
+    y no debe volver 'mixto' a un profesor vespertino); si solo tiene sábado, es 'diurno'.
+    """
+    filas = (
+        db.query(
+            models.DisponibilidadDocente.profesor_id,
+            models.BloqueHorario.jornada,
+            models.BloqueHorario.dia_semana,
+        )
+        .join(models.BloqueHorario, models.DisponibilidadDocente.bloque_horario_id == models.BloqueHorario.id)
+        .filter(models.DisponibilidadDocente.disponible.is_(True))
+        .all()
+    )
+    info = defaultdict(lambda: {"diurno": False, "vespertino": False, "sabado": False})
+    for profesor_id, jornada, dia in filas:
+        valor = jornada.value if hasattr(jornada, "value") else str(jornada)
+        if dia == 6:
+            info[profesor_id]["sabado"] = True
+        elif valor == "vespertino":
+            info[profesor_id]["vespertino"] = True
+        else:
+            info[profesor_id]["diurno"] = True
+ 
+    resultado = {}
+    for profesor_id, d in info.items():
+        if d["diurno"] and d["vespertino"]:
+            resultado[str(profesor_id)] = "mixto"
+        elif d["vespertino"]:
+            resultado[str(profesor_id)] = "vespertino"
+        else:
+            resultado[str(profesor_id)] = "diurno"   # solo diurno o solo sábado
+    return resultado
 
 @app.get("/api/profesores/disponibilidad")
 def resumen_disponibilidad_profesores(
