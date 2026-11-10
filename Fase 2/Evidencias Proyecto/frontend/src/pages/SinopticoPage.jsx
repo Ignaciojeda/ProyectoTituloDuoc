@@ -939,8 +939,13 @@ export default function SinopticoPage() {
         onPointerDownCapture={() => { if (s && !activo) activarSinoptico(s) }}
         style={{
           flex: '0 0 auto', width: s ? 'clamp(780px, 86%, 1100px)' : '100%', boxSizing: 'border-box',
-          padding: '10px', borderRadius: 'var(--radius-sm)', background: '#fff',
-          border: s && variasSecciones && activo ? '2px solid var(--duoc-yellow)' : '1px solid var(--border-color)',
+          padding: '10px', borderRadius: 'var(--radius-sm)',
+          background: s && fin ? '#f0fdf4' : '#fff',
+          border: s && fin
+            ? '3px solid #15803d'
+            : (s && variasSecciones && activo ? '2px solid var(--duoc-yellow)' : '1px solid var(--border-color)'),
+          // Finalizado y además activo: borde verde + halo amarillo para saber cuál se está editando
+          boxShadow: s && fin && variasSecciones && activo ? '0 0 0 3px var(--duoc-yellow)' : 'none',
           scrollSnapAlign: 'start',
         }}
       >
@@ -964,9 +969,17 @@ export default function SinopticoPage() {
             </button>
           </div>
         )}
-        <div style={{ marginBottom: '8px', borderBottom: '2px solid var(--duoc-navy)', paddingBottom: '4px' }}>
-          <h3 style={{ margin: 0, color: 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800' }}>
-            {s ? `SECCIÓN ${indice + 1} · #${s.id} · ` : ''}BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES
+        <div style={{ marginBottom: '8px', borderBottom: `2px solid ${s && fin ? '#15803d' : 'var(--duoc-navy)'}`, paddingBottom: '4px' }}>
+          <h3 style={{ margin: 0, color: s && fin ? '#15803d' : 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span>{s ? `SECCIÓN ${indice + 1} · #${s.id} · ` : ''}BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES</span>
+            {s && fin && (
+              <span style={{
+                padding: '2px 8px', fontSize: '11px', fontWeight: 800, letterSpacing: '0.3px',
+                borderRadius: '999px', backgroundColor: '#15803d', color: '#fff', whiteSpace: 'nowrap',
+              }}>
+                ✔ FINALIZADO
+              </span>
+            )}
           </h3>
           <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
             {s ? `${s.semestre} · ` : ''}Jornada: {jornadaPanel.charAt(0).toUpperCase() + jornadaPanel.slice(1)}
@@ -979,7 +992,7 @@ export default function SinopticoPage() {
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'sans-serif', tableLayout: 'fixed' }}>
             <thead>
-              <tr style={{ backgroundColor: 'var(--duoc-navy)', color: '#fff' }}>
+              <tr style={{ backgroundColor: s && fin ? '#15803d' : 'var(--duoc-navy)', color: '#fff' }}>
                 <th style={{ padding: '4px', border: '1px solid #cbd5e1', width: '45px', fontSize: '11px' }}>Módulo</th>
                 <th style={{ padding: '4px', border: '1px solid #cbd5e1', width: '90px', fontSize: '11px' }}>Horario</th>
                 {DIAS_SEMANA.map(d => (
