@@ -965,9 +965,14 @@ def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = De
 # 3. ALGORITMO Y EDITOR DE SINÓPTICOS
 # ===========================================================================
 
+class CrearSinopticoConNivel(schemas.GenerarSinopticoRequest):
+    # Nivel de la malla al que pertenece (para agrupar secciones aunque el sinóptico aún esté vacío)
+    nivel_semestral: Optional[int] = None
+
+
 @app.post("/api/sinopticos", status_code=201)
 def crear_sinoptico_vacio(
-    datos: schemas.GenerarSinopticoRequest,
+    datos: CrearSinopticoConNivel,
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(require_coordinador),
 ):
@@ -979,6 +984,8 @@ def crear_sinoptico_vacio(
         carrera_id=datos.carrera_id,
         semestre_id=datos.semestre_id,
         jornada=datos.jornada,
+        creado_por_id=usuario.id,
+        nivel_semestral=datos.nivel_semestral or None,
     )
     db.add(nuevo)
     try:
@@ -995,6 +1002,7 @@ def crear_sinoptico_vacio(
 class GenerarSinopticoConId(schemas.GenerarSinopticoRequest):
     # Si viene, se rellena ese sinóptico (sin crear uno nuevo) con las asignaturas que aún no tiene
     sinoptico_id: Optional[int] = None
+    nivel_semestral: Optional[int] = None
 
 
 @app.post("/api/sinopticos/generar")
@@ -1046,7 +1054,9 @@ def generar_sinoptico(
         nuevo_sinoptico = models.Sinoptico(
             carrera_id=datos.carrera_id,
             semestre_id=datos.semestre_id,
-            jornada=datos.jornada
+            jornada=datos.jornada,
+            creado_por_id=usuario.id,
+            nivel_semestral=datos.nivel_semestral or None,
         )
         db.add(nuevo_sinoptico)
         db.flush()
@@ -1216,7 +1226,7 @@ def generar_sinoptico(
 
 
 @app.get("/api/sinopticos")
-def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = Depends(require_docente)):
     filas = (
         db.query(models.Sinoptico, models.Carrera, models.Semestre)
         .join(models.Carrera, models.Sinoptico.carrera_id == models.Carrera.id)
@@ -1255,6 +1265,8 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
     for p in db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all():
         planes_carrera[p.carrera_id].append(p.id)
 
+    nombres_usuarios = {uid: nombre for uid, nombre in db.query(models.Usuario.id, models.Usuario.nombre).all()}
+
     resultado = []
     for sinoptico, carrera, semestre in filas:
         planes = planes_por_sin.get(sinoptico.id)
@@ -1271,7 +1283,7 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
         elif len(niveles) > 1:
             nivel = 0   # 0 = varios niveles (el filtro queda en "Todos los niveles")
         else:
-            nivel = None  # sinóptico vacío: no se sabe, el frontend no toca el filtro
+            nivel = sinoptico.nivel_semestral  # sinóptico vacío: el nivel con que se creó (o None si no se sabe)
 
         resultado.append({
             "id": sinoptico.id,
@@ -1285,6 +1297,9 @@ def listar_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends
             "jornada": sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada),
             "finalizado": sinoptico.finalizado,
             "creado_en": sinoptico.creado_en,
+            "creado_por_id": sinoptico.creado_por_id,
+            "creado_por": nombres_usuarios.get(sinoptico.creado_por_id),
+            "es_mio": sinoptico.creado_por_id is not None and sinoptico.creado_por_id == usuario.id,
         })
     return resultado
 

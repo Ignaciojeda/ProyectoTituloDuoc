@@ -408,11 +408,13 @@ export default function SinopticoPage() {
     [sinopticosExistentes, sinopticoSel]
   )
 
-  // Sinópticos de la carrera del que está abierto, del más antiguo al más nuevo
+  // Sinópticos de la MISMA carrera y el MISMO nivel del que está abierto, del más antiguo al más nuevo.
+  // (nivel null = sinóptico vacío sin nivel conocido; 0 = varios niveles; se agrupan entre sí)
   const seccionesCarrera = useMemo(() => {
     if (!sinopticoActual) return []
+    const nivelDe = (x) => x.nivel_semestral ?? null
     return sinopticosExistentes
-      .filter(s => s.carrera_id === sinopticoActual.carrera_id)
+      .filter(s => s.carrera_id === sinopticoActual.carrera_id && nivelDe(s) === nivelDe(sinopticoActual))
       .sort((a, b) => a.id - b.id)
   }, [sinopticosExistentes, sinopticoActual])
 
@@ -473,6 +475,7 @@ export default function SinopticoPage() {
         semestre_id: sinopticoActual.semestre_id,
         jornada: sinopticoActual.jornada,
         plan_estudio_id: sinopticoActual.plan_estudio_id ?? null,
+        nivel_semestral: sinopticoActual.nivel_semestral > 0 ? sinopticoActual.nivel_semestral : null,
       })
       const { data: lista } = await api.get('/sinopticos')
       if (sinopticoSel) setEventosHermanos(prev => ({ ...prev, [sinopticoSel]: eventos }))
@@ -1376,7 +1379,7 @@ export default function SinopticoPage() {
           {sinopticoActual && seccionesCarrera.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
               <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--duoc-navy)' }}>
-                {sinopticoActual.carrera} · {seccionesCarrera.length} {seccionesCarrera.length === 1 ? 'sección' : 'secciones'}
+                {sinopticoActual.carrera}{sinopticoActual.nivel_semestral > 0 ? ` · Nivel ${sinopticoActual.nivel_semestral}°` : ''} · {seccionesCarrera.length} {seccionesCarrera.length === 1 ? 'sección' : 'secciones'}
                 <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · deslice la barra horizontal para ver las demás</span>
               </span>
               <span style={{ display: 'flex', gap: '4px' }}>

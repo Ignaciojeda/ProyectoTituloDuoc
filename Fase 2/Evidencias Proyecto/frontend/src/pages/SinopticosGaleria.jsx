@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/client'
@@ -36,10 +36,8 @@ export default function SinopticosGaleria() {
   const [sinopticos, setSinopticos] = useState([])
   const [eventosPorSinoptico, setEventosPorSinoptico] = useState({})
   const [cargando, setCargando] = useState(true)
-
-  // Filtros: por carrera y por estado (todos / finalizados / por finalizar)
-  const [carreraFiltro, setCarreraFiltro] = useState('')
-  const [estadoFiltro, setEstadoFiltro] = useState('todos')
+  // 'todos' | 'mios' (pestaña "Hechos por mí")
+  const [pestana, setPestana] = useState('todos')
 
   useEffect(() => {
     const cargarTodo = async () => {
@@ -63,46 +61,32 @@ export default function SinopticosGaleria() {
     cargarTodo()
   }, [])
 
-  // Carreras disponibles para el selector de filtro: únicas por NOMBRE (aunque
-  // por debajo haya varios carrera_id/código distintos para el mismo nombre
-  // -p.ej. diurno/vespertino-, el filtro las trata como un solo conjunto).
-  const carrerasDisponibles = Object.values(
-    sinopticos.reduce((acc, s) => {
-      if (!acc[s.carrera]) acc[s.carrera] = { nombre: s.carrera, codigos: new Set() }
-      acc[s.carrera].codigos.add(s.codigo_carrera)
-      return acc
-    }, {})
-  ).sort((a, b) => a.nombre.localeCompare(b.nombre))
-
-  // Sinópticos ya filtrados por carrera (para que los contadores de estado
-  // reflejen la carrera elegida, si hay alguna elegida). El filtro es por
-  // NOMBRE, así que agrupa todos los carrera_id que compartan ese nombre.
-  const sinopticosPorCarrera = carreraFiltro
-    ? sinopticos.filter(s => s.carrera === carreraFiltro)
-    : sinopticos
-
-  const totalFinalizados = sinopticosPorCarrera.filter(s => s.finalizado).length
-  const totalPorFinalizar = sinopticosPorCarrera.filter(s => !s.finalizado).length
-
-  // Lista final que se agrupa y se muestra, aplicando además el filtro de estado
-  const sinopticosFiltrados = sinopticosPorCarrera.filter(s => {
-    if (estadoFiltro === 'finalizados') return s.finalizado
-    if (estadoFiltro === 'pendientes') return !s.finalizado
-    return true
-  })
-
-  // Agrupa los sinópticos (ya filtrados) por NOMBRE de carrera -no por
-  // carrera_id-, para que las distintas variantes (distinto código, misma
-  // carrera) aparezcan juntas en una sola sección.
-  const porCarrera = sinopticosFiltrados.reduce((acc, s) => {
-    if (!acc[s.carrera]) acc[s.carrera] = { nombre: s.carrera, lista: [] }
-    acc[s.carrera].lista.push(s)
-    return acc
-  }, {})
-
-  const gruposCarrera = Object.entries(porCarrera).sort(([, a], [, b]) =>
-    a.nombre.localeCompare(b.nombre)
+  const visibles = useMemo(
+    () => (pestana === 'mios' ? sinopticos.filter(s => s.es_mio) : sinopticos),
+    [sinopticos, pestana]
   )
+  const cantidadMios = useMemo(() => sinopticos.filter(s => s.es_mio).length, [sinopticos])
+
+  // Año de la carrera según el nivel: niveles 1-2 = 1er año, 3-4 = 2º año, etc.
+  const claveAnio = (nivel) => (nivel ? Math.ceil(nivel / 2) : 0)
+  const tituloAnio = (anio) => (anio === 0 ? 'Sin nivel definido (vacíos o varios niveles)' : `${anio}º año`)
+
+  // carrera -> año de la carrera -> sinópticos ordenados por nivel (uno al lado del otro)
+  const porCarrera = useMemo(() => {
+    const mapa = {}
+    visibles.forEach(s => {
+      const anio = claveAnio(s.nivel_semestral)
+      mapa[s.carrera] = mapa[s.carrera] || {}
+      mapa[s.carrera][anio] = mapa[s.carrera][anio] || []
+      mapa[s.carrera][anio].push(s)
+    })
+    Object.values(mapa).forEach(anios =>
+      Object.values(anios).forEach(lista =>
+        lista.sort((x, y) => (x.nivel_semestral || 99) - (y.nivel_semestral || 99) || x.id - y.id)
+      )
+    )
+    return mapa
+  }, [visibles])
 
   const celdaOcupada = (eventos, diaKey, horaInicioLabel) => {
     const horaMatch = horaInicioLabel.split(' A ')[0]
@@ -129,100 +113,70 @@ export default function SinopticosGaleria() {
           </button>
         </div>
 
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
+          {[
+            { key: 'todos', texto: `Todos (${sinopticos.length})` },
+            { key: 'mios', texto: `Hechos por mí (${cantidadMios})` },
+          ].map(t => {
+            const activa = pestana === t.key
+            return (
+              <button
+                key={t.key}
+                onClick={() => setPestana(t.key)}
+                style={{
+                  padding: '7px 16px', fontSize: '13px', cursor: 'pointer', borderRadius: '6px 6px 0 0',
+                  border: '1px solid var(--duoc-navy)', borderBottom: activa ? '3px solid var(--duoc-yellow)' : '1px solid var(--duoc-navy)',
+                  background: activa ? 'var(--duoc-navy)' : '#fff', color: activa ? '#fff' : 'var(--duoc-navy)',
+                  fontWeight: activa ? 'bold' : 'normal',
+                }}
+              >
+                {t.texto}
+              </button>
+            )
+          })}
+        </div>
+
         {cargando && <p style={{ color: 'var(--text-muted)' }}>Cargando sinópticos...</p>}
 
         {!cargando && sinopticos.length === 0 && (
           <p style={{ color: 'var(--text-muted)' }}>Todavía no hay sinópticos generados.</p>
         )}
 
-        {!cargando && sinopticos.length > 0 && (
-          <div style={{
-            display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end',
-            marginBottom: '20px', padding: '12px 14px', backgroundColor: '#fff',
-            border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)',
-          }}>
-            {/* Filtro por carrera */}
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--duoc-navy)', marginBottom: '4px' }}>
-                Carrera
-              </label>
-              <select
-                className="duoc-select"
-                value={carreraFiltro}
-                onChange={e => setCarreraFiltro(e.target.value)}
-                style={{ padding: '6px 10px', fontSize: '12px', minWidth: '220px' }}
-              >
-                <option value="">Todas las carreras</option>
-                {carrerasDisponibles.map(c => (
-                  <option key={c.nombre} value={c.nombre}>{c.nombre}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Aparte: estado (finalizados / por finalizar) */}
-            <div>
-              <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: 'var(--duoc-navy)', marginBottom: '4px' }}>
-                Estado
-              </label>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {[
-                  { key: 'todos', label: 'Todos', cuenta: sinopticosPorCarrera.length },
-                  { key: 'finalizados', label: '✓ Finalizados', cuenta: totalFinalizados },
-                  { key: 'pendientes', label: 'Por finalizar', cuenta: totalPorFinalizar },
-                ].map(op => {
-                  const activo = estadoFiltro === op.key
-                  return (
-                    <button
-                      key={op.key}
-                      onClick={() => setEstadoFiltro(op.key)}
-                      style={{
-                        padding: '6px 10px', fontSize: '12px', fontWeight: 700,
-                        borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                        border: activo ? '1px solid var(--duoc-navy)' : '1px solid #cbd5e1',
-                        backgroundColor: activo ? 'var(--duoc-navy)' : '#fff',
-                        color: activo ? '#fff' : 'var(--text-muted)',
-                      }}
-                    >
-                      {op.label} ({op.cuenta})
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
+        {!cargando && sinopticos.length > 0 && visibles.length === 0 && (
+          <p style={{ color: 'var(--text-muted)' }}>
+            Aún no has creado ningún sinóptico. Los que crees o generes desde ahora aparecerán aquí.
+          </p>
         )}
 
-        {!cargando && sinopticos.length > 0 && sinopticosFiltrados.length === 0 && (
-          <p style={{ color: 'var(--text-muted)' }}>No hay sinópticos que calcen con ese filtro.</p>
-        )}
-
-        {gruposCarrera.map(([carreraId, grupo]) => (
-          <div key={carreraId} style={{ marginBottom: '26px' }}>
-            <h3 style={{ color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px', fontSize: '15px' }}>
-              {grupo.nombre}
+        {Object.entries(porCarrera).map(([carrera, anios]) => (
+          <div key={carrera} style={{ marginBottom: '30px' }}>
+            <h3 style={{ color: 'var(--duoc-navy)', borderBottom: '2px solid var(--duoc-yellow)', paddingBottom: '4px', fontSize: '16px' }}>
+              {carrera}
             </h3>
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', marginTop: '10px' }}>
-              {grupo.lista.map(s => {
+            <div style={{ display: 'flex', flexWrap: 'nowrap', alignItems: 'flex-start', gap: '22px', marginTop: '12px', overflowX: 'auto', paddingBottom: '10px' }}>
+            {Object.entries(anios)
+              .sort(([x], [y]) => Number(x === '0' ? 99 : x) - Number(y === '0' ? 99 : y))
+              .map(([anio, lista], idx) => (
+                <div key={anio} style={{ flex: '0 0 auto', paddingLeft: idx > 0 ? '22px' : 0, borderLeft: idx > 0 ? '2px dashed #cbd5e1' : 'none' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    {tituloAnio(Number(anio))} · {lista.length} sinóptico{lista.length !== 1 ? 's' : ''}
+                  </div>
+
+                  {/* Un sinóptico al lado del otro, ordenados por nivel; con barra horizontal si no caben */}
+                  <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '14px', marginTop: '8px' }}>
+                    {lista.map(s => {
                 const eventos = eventosPorSinoptico[String(s.id)] || []
                 return (
-                  <div key={s.id} className="duoc-card" style={{ width: '220px', padding: '10px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>
-                        #{s.id} - {s.semestre}
-                      </div>
-                      <span style={{
-                        fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '10px',
-                        backgroundColor: s.finalizado ? '#dcfce7' : '#fef9c3',
-                        color: s.finalizado ? '#15803d' : '#854d0e',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {s.finalizado ? '✓ Finalizado' : 'Por finalizar'}
-                      </span>
+                  <div key={s.id} className="duoc-card" style={{ width: '220px', minWidth: '220px', flexShrink: 0, padding: '10px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>
+                      #{s.id} · {s.nivel_semestral ? `Nivel ${s.nivel_semestral}°` : 'Sin nivel'} · {s.semestre}
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                      {s.jornada ? s.jornada.charAt(0).toUpperCase() + s.jornada.slice(1) : ''} · {eventos.length} clase{eventos.length !== 1 ? 's' : ''}
                     </div>
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                      {eventos.length} clase{eventos.length !== 1 ? 's' : ''} asignada{eventos.length !== 1 ? 's' : ''}
-                      {' · '}{s.codigo_carrera}
+                      {s.es_mio ? 'Hecho por ti' : s.creado_por ? `Hecho por ${s.creado_por}` : 'Autor sin registrar'}
                     </div>
 
                     {/* Mini previsualización: un cuadradito por módulo/día, relleno si está ocupado */}
@@ -282,6 +236,9 @@ export default function SinopticosGaleria() {
                   </div>
                 )
               })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ))}

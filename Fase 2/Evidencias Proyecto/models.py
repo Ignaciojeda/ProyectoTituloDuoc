@@ -154,6 +154,8 @@ class Sinoptico(Base):
     jornada = Column(Enum(JornadaTipo), nullable=False, default=JornadaTipo.diurno)
     finalizado = Column(Boolean, nullable=False, default=False, server_default="false")
     creado_en = Column(DateTime, server_default=func.now())
+    creado_por_id = Column(Integer, ForeignKey("usuario.id", ondelete="SET NULL"), nullable=True)
+    nivel_semestral = Column(SmallInteger, nullable=True)
 
     carrera = relationship("Carrera")
     semestre = relationship("Semestre")
