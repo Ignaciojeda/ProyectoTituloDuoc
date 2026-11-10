@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/client'
@@ -82,6 +82,13 @@ export default function SinopticoPage() {
     color: COLOR_DEFAULT,
   })
   const [bloqueFijo, setBloqueFijo] = useState(false)
+
+  // Barra horizontal: se muestran todos los sinópticos de la misma carrera, uno al lado del otro.
+  // `eventos` sigue siendo el del sinóptico ACTIVO (el que se edita); `eventosHermanos` guarda los de los demás.
+  const barraSeccionesRef = useRef(null)
+  const activadoPorClickRef = useRef(false)
+  const [eventosHermanos, setEventosHermanos] = useState({})
+  const [creandoSeccion, setCreandoSeccion] = useState(false)
 
   useEffect(() => {
     api.get('/carreras').then(res => setCarreras(res.data)).catch(err => console.error('Error carreras:', err))
@@ -390,6 +397,97 @@ export default function SinopticoPage() {
       setSinopticosExistentes(res.data)
     } catch (err) {
       setMensaje(err.response?.data?.detail || 'Error al crear el sinóptico.')
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Barra horizontal de secciones (todos los sinópticos con la misma carrera_id)
+  // ---------------------------------------------------------------------------
+  const sinopticoActual = useMemo(
+    () => sinopticosExistentes.find(s => String(s.id) === String(sinopticoSel)) || null,
+    [sinopticosExistentes, sinopticoSel]
+  )
+
+  // Sinópticos de la carrera del que está abierto, del más antiguo al más nuevo
+  const seccionesCarrera = useMemo(() => {
+    if (!sinopticoActual) return []
+    return sinopticosExistentes
+      .filter(s => s.carrera_id === sinopticoActual.carrera_id)
+      .sort((a, b) => a.id - b.id)
+  }, [sinopticosExistentes, sinopticoActual])
+
+  const idsSeccionesKey = seccionesCarrera.map(s => s.id).join(',')
+
+  // Cargar los eventos de TODOS los demás sinópticos de la carrera (el activo ya se carga con cargarEventosSinoptico)
+  useEffect(() => {
+    let cancelado = false
+    seccionesCarrera
+      .filter(s => String(s.id) !== String(sinopticoSel))
+      .forEach(s => {
+        api.get(`/sinopticos/${s.id}/eventos`)
+          .then(({ data }) => { if (!cancelado) setEventosHermanos(prev => ({ ...prev, [s.id]: data })) })
+          .catch(err => console.error(`Error al cargar eventos del sinóptico ${s.id}:`, err))
+      })
+    return () => { cancelado = true }
+  }, [idsSeccionesKey, sinopticoSel])
+
+  // Hacer "activa" a una de las secciones (al interactuar con su grilla): pasa a ser la que se edita
+  const activarSinoptico = (s) => {
+    if (String(s.id) === String(sinopticoSel)) return
+    activadoPorClickRef.current = true
+    if (sinopticoSel) setEventosHermanos(prev => ({ ...prev, [sinopticoSel]: eventos }))
+    setItemEditando(null)
+    setAgregandoNuevo(false)
+    setEventos(eventosHermanos[s.id] || [])
+    setFinalizadoSel(Boolean(s.finalizado))
+    if (s.jornada) setJornadaSel(s.jornada)
+    if (s.plan_estudio_id) setPlanSel(String(s.plan_estudio_id))
+    if (s.semestre_id) setSemestreSel(String(s.semestre_id))
+    if (s.nivel_semestral === 0) setNivelSel('')
+    else if (s.nivel_semestral) setNivelSel(String(s.nivel_semestral))
+    setSinopticoSel(String(s.id))
+    cargarEventosSinoptico(s.id)
+  }
+
+  // Al abrir un sinóptico (o crear una sección) llevar la barra hasta él; los clics sobre una grilla no la mueven
+  useEffect(() => {
+    if (activadoPorClickRef.current) { activadoPorClickRef.current = false; return }
+    const cont = barraSeccionesRef.current
+    if (!cont) return
+    const panel = cont.querySelector('[data-activo="true"][data-panel-id]')
+    if (panel) cont.scrollTo({ left: Math.max(panel.offsetLeft - 4, 0), behavior: 'smooth' })
+  }, [sinopticoSel, seccionesCarrera.length])
+
+  const desplazarSecciones = (direccion) => {
+    const cont = barraSeccionesRef.current
+    if (cont) cont.scrollBy({ left: direccion * Math.max(cont.clientWidth * 0.8, 300), behavior: 'smooth' })
+  }
+
+  // Crea un sinóptico vacío con la misma carrera/semestre/jornada que el abierto, lo agrega al final de la barra y lo abre
+  const handleAgregarSeccion = async () => {
+    if (!sinopticoActual) return
+    setCreandoSeccion(true)
+    try {
+      const { data } = await api.post('/sinopticos', {
+        carrera_id: sinopticoActual.carrera_id,
+        semestre_id: sinopticoActual.semestre_id,
+        jornada: sinopticoActual.jornada,
+        plan_estudio_id: sinopticoActual.plan_estudio_id ?? null,
+      })
+      const { data: lista } = await api.get('/sinopticos')
+      if (sinopticoSel) setEventosHermanos(prev => ({ ...prev, [sinopticoSel]: eventos }))
+      setSinopticosExistentes(lista)
+      setItemEditando(null)
+      setAgregandoNuevo(false)
+      setEventos([])
+      setFinalizadoSel(false)
+      setSinopticoSel(String(data.sinoptico_id))
+      cargarEventosSinoptico(data.sinoptico_id)
+      setMensaje(`Sección nueva creada (sinóptico #${data.sinoptico_id}). Use el "+" de la grilla para agregar ramos.`)
+    } catch (err) {
+      window.alert(err.response?.data?.detail || 'No se pudo crear la nueva sección.')
+    } finally {
+      setCreandoSeccion(false)
     }
   }
 
@@ -767,9 +865,9 @@ export default function SinopticoPage() {
     return `${dia} ${b.hora_inicio.slice(0, 5)} - ${b.hora_fin.slice(0, 5)} (${b.jornada})`
   }
 
-  const obtenerClaseParaModulo = (diaKey, horaInicioLabel) => {
+  const obtenerClaseParaModulo = (diaKey, horaInicioLabel, lista = eventos) => {
     const horaMatch = horaInicioLabel.split(' A ')[0]
-    return eventos.find(e => {
+    return lista.find(e => {
       const esDia = Array.isArray(e.daysOfWeek) ? e.daysOfWeek.includes(diaKey) : e.daysOfWeek === diaKey
       const esHora = e.startTime && e.startTime.startsWith(horaMatch)
       return esDia && esHora
@@ -784,8 +882,12 @@ export default function SinopticoPage() {
     e.preventDefault()
   }
 
-  const handleDrop = async (e, nuevoDiaKey, nuevoModuloLabel) => {
+  const handleDrop = async (e, nuevoDiaKey, nuevoModuloLabel, sinopticoDestinoId) => {
     e.preventDefault()
+    if (sinopticoDestinoId && String(sinopticoDestinoId) !== String(sinopticoSel)) {
+      setMensaje('Un bloque solo se puede mover dentro de su propia sección.')
+      return
+    }
     if (finalizadoSel) { avisarFinalizado(); return }
     const claseId = parseInt(e.dataTransfer.getData('claseId'))
     const clase = eventos.find(ev => ev.id === claseId)
@@ -819,6 +921,202 @@ export default function SinopticoPage() {
       setMensaje(detalle)
       window.alert(detalle)
     }
+  }
+
+  // Dibuja el horario completo de UN sinóptico (s = null cuando aún no hay ninguno abierto)
+  const renderPanelSinoptico = (s, indice) => {
+    const activo = s ? String(s.id) === String(sinopticoSel) : true
+    const eventosPanel = (!s || activo) ? eventos : (eventosHermanos[s.id] || [])
+    const fin = !s ? false : (activo ? finalizadoSel : Boolean(s.finalizado))
+    const jornadaPanel = String(s?.jornada || jornadaSel || 'diurno')
+    const nivelPanel = s ? (s.nivel_semestral > 0 ? s.nivel_semestral : '') : nivelSel
+    const variasSecciones = seccionesCarrera.length > 1
+    return (
+      <div
+        key={s ? s.id : 'sin-sinoptico'}
+        data-panel-id={s ? s.id : undefined}
+        data-activo={activo}
+        onPointerDownCapture={() => { if (s && !activo) activarSinoptico(s) }}
+        style={{
+          flex: '0 0 auto', width: s ? 'clamp(780px, 86%, 1100px)' : '100%', boxSizing: 'border-box',
+          padding: '10px', borderRadius: 'var(--radius-sm)', background: '#fff',
+          border: s && variasSecciones && activo ? '2px solid var(--duoc-yellow)' : '1px solid var(--border-color)',
+          scrollSnapAlign: 'start',
+        }}
+      >
+        {s && fin && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+            marginBottom: '10px', padding: '8px 12px', borderRadius: 'var(--radius-sm)',
+            backgroundColor: '#fef3c7', border: '1px solid #f3cf7a', color: '#854d0e', fontSize: '12px',
+          }}>
+            <span>🔒 Este sinóptico está <strong>finalizado</strong> y quedó bloqueado para edición. Para modificarlo debes desbloquearlo primero.</span>
+            <button
+              onClick={handleFinalizarSinoptico}
+              disabled={finalizando}
+              style={{
+                padding: '5px 10px', fontSize: '11px', fontWeight: 700, border: '1px solid #854d0e',
+                borderRadius: 'var(--radius-sm)', background: '#fff', color: '#854d0e',
+                cursor: finalizando ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              Desbloquear para editar
+            </button>
+          </div>
+        )}
+        <div style={{ marginBottom: '8px', borderBottom: '2px solid var(--duoc-navy)', paddingBottom: '4px' }}>
+          <h3 style={{ margin: 0, color: 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800' }}>
+            {s ? `SECCIÓN ${indice + 1} · #${s.id} · ` : ''}BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES
+          </h3>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+            {s ? `${s.semestre} · ` : ''}Jornada: {jornadaPanel.charAt(0).toUpperCase() + jornadaPanel.slice(1)}
+            {nivelPanel ? ` · Nivel: ${nivelPanel}°` : ''}
+            {fin
+              ? ' · Sinóptico finalizado: bloqueado para edición'
+              : ' · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario'}
+          </span>
+        </div>
+
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'sans-serif', tableLayout: 'fixed' }}>
+            <thead>
+              <tr style={{ backgroundColor: 'var(--duoc-navy)', color: '#fff' }}>
+                <th style={{ padding: '4px', border: '1px solid #cbd5e1', width: '45px', fontSize: '11px' }}>Módulo</th>
+                <th style={{ padding: '4px', border: '1px solid #cbd5e1', width: '90px', fontSize: '11px' }}>Horario</th>
+                {DIAS_SEMANA.map(d => (
+                  <th key={d.key} style={{ padding: '4px', border: '1px solid #cbd5e1', textAlign: 'center', fontSize: '11px' }}>
+                    {d.nombre}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MODULOS_DUOC.map((m) => (
+                <tr key={m.id} style={{ backgroundColor: m.id % 2 === 0 ? '#f8fafc' : '#ffffff', height: '24px' }}>
+                  <td style={{ padding: '1px 2px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: 'bold', color: 'var(--duoc-navy)', fontSize: '10px' }}>
+                    {m.id}
+                  </td>
+                  <td style={{ padding: '1px 2px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: '600', color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: '10px' }}>
+                    {m.label}
+                  </td>
+                  {DIAS_SEMANA.map(d => {
+                    const clase = obtenerClaseParaModulo(d.key, m.label, eventosPanel)
+                    const colorBloque = colorValido(clase?.extendedProps?.color)
+                    const colorTexto = colorTextoSobre(colorBloque)
+                    return (
+                      <td
+                        key={d.key}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, d.key, m.label, s?.id)}
+                        onClick={() => { if (!clase) abrirNuevoEnCelda(d.key, m.label) }}
+                        style={{ padding: '1px 2px', border: '1px solid #cbd5e1', verticalAlign: 'middle', height: '24px', cursor: clase ? 'default' : (fin ? 'not-allowed' : 'pointer'), position: 'relative', transition: 'background-color 0.15s ease' }}
+                        onMouseEnter={(e) => {
+                          if (!clase && !fin) {
+                            e.currentTarget.style.backgroundColor = '#eef6ff'
+                            const plus = e.currentTarget.querySelector('.celda-plus')
+                            if (plus) plus.style.opacity = '1'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!clase && !fin) {
+                            e.currentTarget.style.backgroundColor = ''
+                            const plus = e.currentTarget.querySelector('.celda-plus')
+                            if (plus) plus.style.opacity = '0'
+                          }
+                        }}
+                      >
+                        {clase ? (
+                          <div
+                            draggable={!fin}
+                            onDragStart={(e) => handleDragStart(e, clase)}
+                            style={{
+                              backgroundColor: colorBloque,
+                              border: '1px solid rgba(0,0,0,0.18)',
+                              padding: '1px 4px',
+                              borderRadius: '2px',
+                              cursor: fin ? 'default' : 'grab',
+                              userSelect: 'none',
+                              lineHeight: '1.1',
+                              position: 'relative',
+                            }}
+                          >
+                            <div style={{ position: 'absolute', top: '0px', right: '0px', display: 'flex', gap: '2px' }}>
+                              <button
+                                onClick={() => abrirEditorBloque(clase)}
+                                title="Editar este bloque"
+                                style={{
+                                  border: '1px solid rgba(0,0,0,0.25)',
+                                  background: '#fff',
+                                  color: 'var(--duoc-navy)',
+                                  borderRadius: '50%',
+                                  width: '12px',
+                                  height: '12px',
+                                  fontSize: '8px',
+                                  lineHeight: '12px',
+                                  textAlign: 'center',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                }}
+                              >
+                                ✎
+                              </button>
+                              {!fin && (
+                                <button
+                                  onClick={() => handleEliminarBloque(clase)}
+                                  title="Eliminar este bloque"
+                                  style={{
+                                    border: '1px solid rgba(0,0,0,0.25)',
+                                    background: '#fff',
+                                    color: '#b02a2a',
+                                    borderRadius: '50%',
+                                    width: '12px',
+                                    height: '12px',
+                                    fontSize: '9px',
+                                    lineHeight: '12px',
+                                    textAlign: 'center',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                            <div style={{ fontWeight: 'bold', color: colorTexto, fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {clase.title}
+                            </div>
+                            <div style={{ color: colorTexto, opacity: 0.9, fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {clase.extendedProps?.seccion || clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
+                              {clase.extendedProps?.semanas ? ` · ${clase.extendedProps.semanas.length} sem.` : ''}
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className="celda-plus"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              height: '100%',
+                              color: 'var(--duoc-blue-accent)',
+                              fontSize: '16px',
+                              fontWeight: 'bold',
+                              opacity: 0,
+                              transition: 'opacity 0.15s ease',
+                              pointerEvents: 'none'
+                            }}
+                          >
+                            +
+                          </div>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+      </div>
+    )
   }
 
   return (
@@ -1060,179 +1358,64 @@ export default function SinopticoPage() {
           </button>
         )}
 
-        {/* TABLA HORARIO COMPACTA */}
-        <div className="duoc-card" style={{ flex: 1, padding: '12px', overflowX: 'auto' }}>
-          {sinopticoSel && finalizadoSel && (
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
-              marginBottom: '10px', padding: '8px 12px', borderRadius: 'var(--radius-sm)',
-              backgroundColor: '#fef3c7', border: '1px solid #f3cf7a', color: '#854d0e', fontSize: '12px',
-            }}>
-              <span>🔒 Este sinóptico está <strong>finalizado</strong> y quedó bloqueado para edición. Para modificarlo debes desbloquearlo primero.</span>
-              <button
-                onClick={handleFinalizarSinoptico}
-                disabled={finalizando}
-                style={{
-                  padding: '5px 10px', fontSize: '11px', fontWeight: 700, border: '1px solid #854d0e',
-                  borderRadius: 'var(--radius-sm)', background: '#fff', color: '#854d0e',
-                  cursor: finalizando ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
-                }}
-              >
-                Desbloquear para editar
-              </button>
+        {/* BARRA HORIZONTAL: un horario por cada sinóptico de la carrera + botón para agregar sección */}
+        <div className="duoc-card" style={{ flex: 1, minWidth: 0, padding: '12px', overflow: 'hidden' }}>
+          {sinopticoActual && seccionesCarrera.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--duoc-navy)' }}>
+                {sinopticoActual.carrera} · {seccionesCarrera.length} {seccionesCarrera.length === 1 ? 'sección' : 'secciones'}
+                <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · deslice la barra horizontal para ver las demás</span>
+              </span>
+              <span style={{ display: 'flex', gap: '4px' }}>
+                {[['‹', -1, 'Ver secciones anteriores'], ['›', 1, 'Ver más secciones']].map(([txt, dir, titulo]) => (
+                  <button
+                    key={dir}
+                    onClick={() => desplazarSecciones(dir)}
+                    title={titulo}
+                    aria-label={titulo}
+                    style={{
+                      width: '28px', height: '24px', fontSize: '16px', fontWeight: 800, lineHeight: 1,
+                      border: '1px solid var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+                      background: '#fff', color: 'var(--duoc-navy)', cursor: 'pointer',
+                    }}
+                  >
+                    {txt}
+                  </button>
+                ))}
+              </span>
             </div>
           )}
-          <div style={{ marginBottom: '8px', borderBottom: '2px solid var(--duoc-navy)', paddingBottom: '4px' }}>
-            <h3 style={{ margin: 0, color: 'var(--duoc-navy)', fontSize: '15px', fontWeight: '800' }}>
-              BOLETÍN DE CARGA ACADÉMICA - HORARIO DE CLASES
-            </h3>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              Jornada: {jornadaSel.charAt(0).toUpperCase() + jornadaSel.slice(1)}
-              {nivelSel ? ` · Nivel: ${nivelSel}°` : ''}
-              {finalizadoSel
-                ? ' · Sinóptico finalizado: bloqueado para edición'
-                : ' · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario'}
-            </span>
-          </div>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'sans-serif', tableLayout: 'fixed' }}>
-            <thead>
-              <tr style={{ backgroundColor: 'var(--duoc-navy)', color: '#fff' }}>
-                <th style={{ padding: '4px', border: '1px solid #cbd5e1', width: '45px', fontSize: '11px' }}>Módulo</th>
-                <th style={{ padding: '4px', border: '1px solid #cbd5e1', width: '90px', fontSize: '11px' }}>Horario</th>
-                {DIAS_SEMANA.map(d => (
-                  <th key={d.key} style={{ padding: '4px', border: '1px solid #cbd5e1', textAlign: 'center', fontSize: '11px' }}>
-                    {d.nombre}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {MODULOS_DUOC.map((m) => (
-                <tr key={m.id} style={{ backgroundColor: m.id % 2 === 0 ? '#f8fafc' : '#ffffff', height: '24px' }}>
-                  <td style={{ padding: '1px 2px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: 'bold', color: 'var(--duoc-navy)', fontSize: '10px' }}>
-                    {m.id}
-                  </td>
-                  <td style={{ padding: '1px 2px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: '600', color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: '10px' }}>
-                    {m.label}
-                  </td>
-                  {DIAS_SEMANA.map(d => {
-                    const clase = obtenerClaseParaModulo(d.key, m.label)
-                    const colorBloque = colorValido(clase?.extendedProps?.color)
-                    const colorTexto = colorTextoSobre(colorBloque)
-                    return (
-                      <td
-                        key={d.key}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(e, d.key, m.label)}
-                        onClick={() => { if (!clase) abrirNuevoEnCelda(d.key, m.label) }}
-                        style={{ padding: '1px 2px', border: '1px solid #cbd5e1', verticalAlign: 'middle', height: '24px', cursor: clase ? 'default' : (finalizadoSel ? 'not-allowed' : 'pointer'), position: 'relative', transition: 'background-color 0.15s ease' }}
-                        onMouseEnter={(e) => {
-                          if (!clase && !finalizadoSel) {
-                            e.currentTarget.style.backgroundColor = '#eef6ff'
-                            const plus = e.currentTarget.querySelector('.celda-plus')
-                            if (plus) plus.style.opacity = '1'
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!clase && !finalizadoSel) {
-                            e.currentTarget.style.backgroundColor = ''
-                            const plus = e.currentTarget.querySelector('.celda-plus')
-                            if (plus) plus.style.opacity = '0'
-                          }
-                        }}
-                      >
-                        {clase ? (
-                          <div
-                            draggable={!finalizadoSel}
-                            onDragStart={(e) => handleDragStart(e, clase)}
-                            style={{
-                              backgroundColor: colorBloque,
-                              border: '1px solid rgba(0,0,0,0.18)',
-                              padding: '1px 4px',
-                              borderRadius: '2px',
-                              cursor: finalizadoSel ? 'default' : 'grab',
-                              userSelect: 'none',
-                              lineHeight: '1.1',
-                              position: 'relative',
-                            }}
-                          >
-                            <div style={{ position: 'absolute', top: '0px', right: '0px', display: 'flex', gap: '2px' }}>
-                              <button
-                                onClick={() => abrirEditorBloque(clase)}
-                                title="Editar este bloque"
-                                style={{
-                                  border: '1px solid rgba(0,0,0,0.25)',
-                                  background: '#fff',
-                                  color: 'var(--duoc-navy)',
-                                  borderRadius: '50%',
-                                  width: '12px',
-                                  height: '12px',
-                                  fontSize: '8px',
-                                  lineHeight: '12px',
-                                  textAlign: 'center',
-                                  cursor: 'pointer',
-                                  padding: 0,
-                                }}
-                              >
-                                ✎
-                              </button>
-                              {!finalizadoSel && (
-                                <button
-                                  onClick={() => handleEliminarBloque(clase)}
-                                  title="Eliminar este bloque"
-                                  style={{
-                                    border: '1px solid rgba(0,0,0,0.25)',
-                                    background: '#fff',
-                                    color: '#b02a2a',
-                                    borderRadius: '50%',
-                                    width: '12px',
-                                    height: '12px',
-                                    fontSize: '9px',
-                                    lineHeight: '12px',
-                                    textAlign: 'center',
-                                    cursor: 'pointer',
-                                    padding: 0,
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              )}
-                            </div>
-                            <div style={{ fontWeight: 'bold', color: colorTexto, fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {clase.title}
-                            </div>
-                            <div style={{ color: colorTexto, opacity: 0.9, fontSize: '8.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {clase.extendedProps?.seccion || clase.extendedProps?.codigo} / {clase.extendedProps?.sala}
-                              {clase.extendedProps?.semanas ? ` · ${clase.extendedProps.semanas.length} sem.` : ''}
-                            </div>
-                          </div>
-                        ) : (
-                          <div
-                            className="celda-plus"
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              height: '100%',
-                              color: 'var(--duoc-blue-accent)',
-                              fontSize: '16px',
-                              fontWeight: 'bold',
-                              opacity: 0,
-                              transition: 'opacity 0.15s ease',
-                              pointerEvents: 'none'
-                            }}
-                          >
-                            +
-                          </div>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div
+            ref={barraSeccionesRef}
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: '12px',
+              overflowX: 'auto', position: 'relative', paddingBottom: '10px',
+              scrollSnapType: 'x proximity',
+            }}
+          >
+            {(seccionesCarrera.length > 0 ? seccionesCarrera : [null]).map((s, i) => renderPanelSinoptico(s, i))}
+
+            {sinopticoActual && (
+              <button
+                onClick={handleAgregarSeccion}
+                disabled={creandoSeccion}
+                title="Crear un sinóptico vacío nuevo para esta misma carrera"
+                style={{
+                  flex: '0 0 auto', alignSelf: 'stretch', width: '170px', minHeight: '200px',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                  border: '2px dashed var(--duoc-navy)', borderRadius: 'var(--radius-sm)',
+                  background: 'var(--duoc-blue-light)', color: 'var(--duoc-navy)',
+                  fontSize: '13px', fontWeight: 700, textAlign: 'center', padding: '10px',
+                  opacity: creandoSeccion ? 0.6 : 1, cursor: creandoSeccion ? 'not-allowed' : 'pointer',
+                  scrollSnapAlign: 'start',
+                }}
+              >
+                <span style={{ fontSize: '28px', lineHeight: 1 }}>＋</span>
+                {creandoSeccion ? 'Creando...' : 'Agregar nueva sección'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
