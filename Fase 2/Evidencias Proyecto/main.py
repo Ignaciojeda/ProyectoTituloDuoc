@@ -4,6 +4,8 @@ from pdf_sinoptico import construir_pdf_sinoptico
 from excel_sinoptico import construir_excel_sinoptico
 from excel_sabana import construir_excel_sabana
 import io
+import os
+import logging
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, status, Query
@@ -35,31 +37,128 @@ from auth import (
     create_access_token,
     get_current_user,
     hash_password,
+    huella_password,
     require_admin,
     require_coordinador,
     require_docente,
 )
 
+logger = logging.getLogger("sinoptico")
+
+# APP_ENV=production en el servidor: desactiva la documentación pública (/docs) y activa cabeceras estrictas
+PRODUCCION = os.environ.get("APP_ENV", "development").lower() == "production"
+
 app = FastAPI(
     title="API de Sistema de Sinópticos - Duoc UC",
     version="2.3.0",
-    description="Backend desacoplado para consumo desde cliente React (Sábana de Programación Oficial)"
+    description="Backend desacoplado para consumo desde cliente React (Sábana de Programación Oficial)",
+    docs_url=None if PRODUCCION else "/docs",
+    redoc_url=None if PRODUCCION else "/redoc",
+    openapi_url=None if PRODUCCION else "/openapi.json",
 )
 
-# Configuración de CORS
+# Configuración de CORS: orígenes permitidos desde la variable CORS_ORIGINS (separados por coma)
 origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
+    o.strip() for o in os.environ.get(
+        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
+    ).split(",") if o.strip()
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,   # la sesión viaja en la cabecera Authorization, no en cookies
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def cabeceras_de_seguridad(request: Request, call_next):
+    respuesta = await call_next(request)
+    respuesta.headers["X-Content-Type-Options"] = "nosniff"
+    respuesta.headers["X-Frame-Options"] = "DENY"
+    respuesta.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/api"):
+        respuesta.headers["Cache-Control"] = "no-store"   # datos personales: que el navegador no los guarde en caché
+    if PRODUCCION:
+        respuesta.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        respuesta.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    return respuesta
+
+
+# ---------------------------------------------------------------------------
+# Defensas: intentos de login, contraseñas y archivos subidos
+# ---------------------------------------------------------------------------
+MAX_FALLOS_POR_EMAIL = 5      # fallos seguidos permitidos por cuenta dentro de la ventana
+MAX_FALLOS_POR_IP = 30        # fallos permitidos por IP dentro de la ventana
+VENTANA_BLOQUEO_MIN = 15
+MAX_EXCEL_BYTES = 5 * 1024 * 1024   # 5 MB
+
+
+def login_bloqueado(db: Session, email: str, ip: Optional[str]) -> bool:
+    """Bloqueo temporal tras muchos intentos fallidos (usa la tabla login_log, sin dependencias nuevas)."""
+    desde = func.now() - timedelta(minutes=VENTANA_BLOQUEO_MIN)
+    ultimo_ok = db.query(func.max(models.LoginLog.creado_en)).filter(
+        models.LoginLog.email_intentado == email, models.LoginLog.exito.is_(True)
+    ).scalar()
+    q = db.query(func.count(models.LoginLog.id)).filter(
+        models.LoginLog.email_intentado == email,
+        models.LoginLog.exito.is_(False),
+        models.LoginLog.creado_en >= desde,
+    )
+    if ultimo_ok is not None:
+        q = q.filter(models.LoginLog.creado_en > ultimo_ok)   # un login correcto reinicia la cuenta de fallos
+    if (q.scalar() or 0) >= MAX_FALLOS_POR_EMAIL:
+        return True
+    if ip:
+        fallos_ip = db.query(func.count(models.LoginLog.id)).filter(
+            models.LoginLog.ip_origen == ip,
+            models.LoginLog.exito.is_(False),
+            models.LoginLog.creado_en >= desde,
+        ).scalar() or 0
+        if fallos_ip >= MAX_FALLOS_POR_IP:
+            return True
+    return False
+
+
+CONTRASENAS_COMUNES = {
+    "password", "contrasena", "12345678", "123456789", "1234567890", "qwerty123", "admin1234",
+    "duoc12345", "duocuc123", "password1", "password123", "abc123456",
+}
+
+
+def validar_password_segura(password: str, email: str = "") -> None:
+    """Lanza 400 si la contraseña es débil: mínimo 10 caracteres, letras y números, y no obvia."""
+    errores = []
+    if len(password) < 10:
+        errores.append("Debe tener al menos 10 caracteres")
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        errores.append("Debe combinar letras y números")
+    if password.lower() in CONTRASENAS_COMUNES:
+        errores.append("No puede ser una contraseña común")
+    parte_email = (email or "").split("@")[0].lower()
+    if len(parte_email) >= 4 and parte_email in password.lower():
+        errores.append("No puede contener el correo")
+    if errores:
+        raise HTTPException(status_code=400, detail="Contraseña poco segura. " + ". ".join(errores) + ".")
+
+
+async def leer_excel_seguro(archivo: UploadFile) -> bytes:
+    """Lee un Excel subido validando extensión, tamaño máximo y firma real del archivo."""
+    nombre = (archivo.filename or "").lower()
+    if not nombre.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx o .xls).")
+    contenido = await archivo.read(MAX_EXCEL_BYTES + 1)
+    if len(contenido) > MAX_EXCEL_BYTES:
+        raise HTTPException(status_code=413, detail=f"El archivo supera el máximo de {MAX_EXCEL_BYTES // (1024 * 1024)} MB.")
+    if not contenido:
+        raise HTTPException(status_code=400, detail="El archivo está vacío.")
+    es_xlsx = contenido[:4] == b"PK\x03\x04"                       # .xlsx es un ZIP
+    es_xls = contenido[:8] == bytes.fromhex("D0CF11E0A1B11AE1")      # .xls (OLE2)
+    if not (es_xlsx or es_xls):
+        raise HTTPException(status_code=400, detail="El contenido no corresponde a un archivo Excel válido.")
+    return contenido
 
 # Crear tablas en la base de datos si no existen
 Base.metadata.create_all(bind=engine)
@@ -265,6 +364,11 @@ def home():
 @app.post("/api/auth/login", response_model=schemas.TokenResponse)
 def login(datos: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else None
+    if login_bloqueado(db, str(datos.email).lower(), ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Intenta nuevamente en {VENTANA_BLOQUEO_MIN} minutos.",
+        )
     user = authenticate_user(db, datos.email, datos.password)
 
     if not user:
@@ -295,7 +399,7 @@ def login(datos: schemas.LoginRequest, request: Request, db: Session = Depends(g
     ))
     db.commit()
 
-    access_token = create_access_token(data={"sub": str(user.id)})
+    access_token = create_access_token(data={"sub": str(user.id), "pv": huella_password(user.password_hash)})
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -447,7 +551,7 @@ async def subir_disponibilidad_docente(
     _: models.Usuario = Depends(require_coordinador)
 ):
     try:
-        contenido_bytes = await archivo.read()
+        contenido_bytes = await leer_excel_seguro(archivo)
         buffer = io.BytesIO(contenido_bytes)
         df = pd.read_excel(buffer)
 
@@ -551,11 +655,15 @@ async def subir_disponibilidad_docente(
             "registros_procesados": registros_creados
         }
 
-    except Exception as e:
+    except HTTPException:
         db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception("Error al procesar la disponibilidad docente")
         raise HTTPException(
             status_code=500,
-            detail=f"Error al procesar la disponibilidad: {str(e)}"
+            detail="No se pudo procesar el archivo. Revisa que use la plantilla correcta."
         )
 
 @app.get("/api/profesores/jornadas")
@@ -896,7 +1004,7 @@ async def subir_mi_disponibilidad(
         )
 
     try:
-        df = pd.read_excel(io.BytesIO(await archivo.read()))
+        df = pd.read_excel(io.BytesIO(await leer_excel_seguro(archivo)))
         df.columns = [str(c).strip().lower() for c in df.columns]
         if "hora_inicio" not in df.columns:
             raise HTTPException(status_code=400, detail="El archivo debe tener la columna 'hora_inicio'.")
@@ -944,9 +1052,10 @@ async def subir_mi_disponibilidad(
     except HTTPException:
         db.rollback()
         raise
-    except Exception as e:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al procesar tu archivo: {str(e)}")
+        logger.exception("Error al procesar el archivo de disponibilidad del docente")
+        raise HTTPException(status_code=500, detail="No se pudo procesar tu archivo. Revisa que use la plantilla correcta.")
 
 
 @app.get("/api/salas", response_model=List[schemas.SalaOut])
@@ -1212,11 +1321,12 @@ def generar_sinoptico(
                          "Generó automáticamente las asignaturas faltantes" if sinoptico_existente else "Generó el sinóptico automáticamente",
                          sinoptico_id=nuevo_sinoptico.id)
         db.commit()
-    except Exception as e:
+    except Exception:
         db.rollback()
+        logger.exception("Error al guardar el sinóptico generado")
         raise HTTPException(
             status_code=500,
-            detail=f"Error al guardar el sinóptico en la base de datos: {str(e)}"
+            detail="No se pudo guardar el sinóptico. Intenta nuevamente."
         )
 
     return {
@@ -2336,6 +2446,7 @@ def crear_usuario(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_admin),
 ):
+    validar_password_segura(datos.password, str(datos.email))
     nuevo = models.Usuario(
         nombre=datos.nombre,
         email=str(datos.email).lower(),
