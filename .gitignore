@@ -1,10 +1,22 @@
-venv/ 
-env/ 
-.venv/ 
-.env 
-__pycache__/ 
-*.pyc 
-*.pyo node_modules/ 
-.vscode/ 
-.DS_Store 
+# Entornos y secretos
+.env
+**/.env
+.env.*
+!.env.example
+
+# Python
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+dist/
+
+# Editor y sistema
+.vscode/
+.DS_Store
 Thumbs.db
