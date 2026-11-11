@@ -28,8 +28,8 @@ if config.DB_HOST not in ("localhost", "127.0.0.1", "db"):
 engine = create_engine(
     DATABASE_URL,
     connect_args=connect_args,
-    pool_pre_ping=True,
-    pool_recycle=1800,    # renueva conexiones inactivas cada 30 min
+    pool_pre_ping=False,
+    pool_recycle=300,    # renueva conexiones inactivas cada 30 min
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

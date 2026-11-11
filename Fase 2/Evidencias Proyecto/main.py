@@ -9,6 +9,7 @@ import logging
 from datetime import time, datetime, date, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, status, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from unicodedata import normalize
 import random
 import re
@@ -72,6 +73,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware("http")
 async def cabeceras_de_seguridad(request: Request, call_next):
@@ -316,10 +318,16 @@ def ranuras_con_ventanas(bloques):
                 ranuras.append(seq[k])
     return ranuras
 
+_JORNADA_IDS = {}
+
 def obtener_jornada_id(db, jornada):
     valor = (jornada.value if hasattr(jornada, 'value') else str(jornada)).lower()
-    fila = db.query(models.Jornada).filter(func.lower(models.Jornada.nombre) == valor).first()
-    return fila.id if fila else None
+    if valor not in _JORNADA_IDS:
+        fila = db.query(models.Jornada).filter(func.lower(models.Jornada.nombre) == valor).first()
+        if not fila:
+            return None
+        _JORNADA_IDS[valor] = fila.id
+    return _JORNADA_IDS[valor]
 
 def generar_seccion(db, sinoptico_id, asignatura, jornada):
     valor = jornada.value if hasattr(jornada, 'value') else str(jornada)
@@ -2230,6 +2238,11 @@ def mover_item_sinoptico(
     if sinoptico_jornada_val == "mixta":
         item.jornada_id = obtener_jornada_id(db, nuevo_bloque.jornada)
     try:
+        registrar_cambio(
+            db, usuario, "bloque_movido", "sinoptico",
+            f"Movió {nombre_asignatura(db, item.asignatura_id)} de {bloque_anterior} a {describir_bloque(db, nuevo_bloque.id)}",
+            sinoptico_id=item.sinoptico_id, profesor_id=item.profesor_id,
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -2237,14 +2250,7 @@ def mover_item_sinoptico(
             status_code=409,
             detail="Choque detectado al mover el bloque. Revisa la asignación de la sala o profesor."
         )
-    db.refresh(item)
-    registrar_cambio(
-        db, usuario, "bloque_movido", "sinoptico",
-        f"Movió {nombre_asignatura(db, item.asignatura_id)} de {bloque_anterior} a {describir_bloque(db, nuevo_bloque.id)}",
-        sinoptico_id=item.sinoptico_id, profesor_id=item.profesor_id,
-    )
-    db.commit()
-    return {"ok": True, "item_id": item.id, "bloque_horario_id": nuevo_bloque.id}
+    return {"ok": True, "item_id": item_id, "bloque_horario_id": nuevo_bloque.id}
 
 
 @app.patch("/api/sinopticos/{sinoptico_id}/asignaturas/{asignatura_id}/color")

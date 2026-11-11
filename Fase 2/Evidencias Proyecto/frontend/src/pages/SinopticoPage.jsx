@@ -241,6 +241,7 @@ export default function SinopticoPage() {
   }, [searchParams])
 
   const cargarEventosSinoptico = async (id) => {
+    cargarHorasSinoptico(id) // en paralelo con los eventos
     try {
       const { data } = await api.get(`/sinopticos/${id}/eventos`)
       setEventos(data)
@@ -248,7 +249,6 @@ export default function SinopticoPage() {
       console.error('Error al cargar eventos:', err)
       setEventos([])
     }
-    cargarHorasSinoptico(id)
   }
 
   // Horas requeridas vs. programadas (18 semanas, 1 hora por bloque) de cada
@@ -543,7 +543,15 @@ export default function SinopticoPage() {
     return ocupanteSala(itemEditando.sala_id, b.dia_semana, b.hora_inicio, itemEditando.id)
   }
 
-  useEffect(() => { setSalaExtra([]) }, [itemEditando?.sala_id])
+    // La ocupación de todas las salas es pesada: solo se pide si cambian la sala o el bloque
+  useEffect(() => {
+    if (!itemEditando || cargandoOcupacion) return
+    const cambioSala = String(itemEditando.sala_id || '') !== String(itemEditando.salaOriginal || '')
+    const cambioBloque = String(itemEditando.bloque_horario_id) !== String(itemEditando.bloqueOriginal)
+    if ((cambioSala || cambioBloque) && itemEditando.sala_id && !Object.keys(ocupacionSalas).length) {
+      cargarOcupacionSalas()
+    }
+  }, [itemEditando?.sala_id, itemEditando?.bloque_horario_id])
 
   const hermanosDelBloque = (item) => {
     if (!item) return []
@@ -678,15 +686,13 @@ export default function SinopticoPage() {
       color: colorValido(clase.extendedProps?.color),
       semanas: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
       semanasOriginales: clase.extendedProps?.semanas || TODAS_LAS_SEMANAS,
+      bloqueOriginal: bloqueId,
+      colorOriginal: colorValido(clase.extendedProps?.color),
     })
     setSalaExtra([])
-    cargarOcupacionSalas()
-    if (bloqueId) {
-      cargarProfesoresPorDisponibilidad(bloqueId, clase.id)
-    }
   }
 
-  const cerrarEditorBloque = () => setItemEditando(null)
+  const cerrarEditorBloque = () => { setItemEditando(null); setOcupacionSalas({}) }
 
   const guardarEdicionBloque = async () => {
     if (finalizadoSel) { avisarFinalizado(); return }
@@ -737,12 +743,14 @@ export default function SinopticoPage() {
 
       // Propaga el color a todos los bloques de esta misma asignatura dentro
       // de este mismo sinóptico (para que toda la asignatura luzca igual).
-      try {
-        await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${itemEditando.asignatura_id}/color`, {
-          color: itemEditando.color,
-        })
-      } catch (errColor) {
-        console.error('No se pudo propagar el color a la asignatura:', errColor)
+      if (itemEditando.color !== itemEditando.colorOriginal) {
+        try {
+          await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${itemEditando.asignatura_id}/color`, {
+            color: itemEditando.color,
+          })
+        } catch (errColor) {
+          console.error('No se pudo propagar el color a la asignatura:', errColor)
+        }
       }
 
       // Semanas en que se dicta: se aplican a todos los bloques de la asignatura
@@ -820,7 +828,7 @@ export default function SinopticoPage() {
       color: COLOR_DEFAULT,
     })
 
-    cargarProfesoresPorDisponibilidad(bloque.id)
+    
     setBloqueFijo(true)
     setAgregandoNuevo(true)
   }
@@ -846,12 +854,15 @@ export default function SinopticoPage() {
 
       // Si ya existían otros bloques de esta asignatura en el sinóptico con otro
       // color, se iguala el color de todos (incluyendo el recién creado).
-      try {
-        await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${nuevoItem.asignatura_id}/color`, {
-          color: nuevoItem.color,
-        })
-      } catch (errColor) {
-        console.error('No se pudo propagar el color a la asignatura:', errColor)
+      const hermano = eventos.find(e => String(e.extendedProps?.asignatura_id) === String(nuevoItem.asignatura_id))
+      if (hermano && colorValido(hermano.extendedProps?.color) !== nuevoItem.color) {
+        try {
+          await api.patch(`/sinopticos/${sinopticoSel}/asignaturas/${nuevoItem.asignatura_id}/color`, {
+            color: nuevoItem.color,
+          })
+        } catch (errColor) {
+          console.error('No se pudo propagar el color a la asignatura:', errColor)
+        }
       }
 
       setMensaje('Ramo agregado correctamente.')
