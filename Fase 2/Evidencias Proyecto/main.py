@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 from typing import Optional, List
-from sqlalchemy import func
+from sqlalchemy import func, text
 from pydantic import BaseModel
 
 
@@ -372,6 +372,7 @@ def home():
 @app.post("/api/auth/login", response_model=schemas.TokenResponse)
 def login(datos: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else None
+    db.expire_on_commit = False   # evita una consulta extra: tras el commit no hace falta releer el usuario
     if login_bloqueado(db, str(datos.email).lower(), ip):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -1165,6 +1166,16 @@ def generar_sinoptico(
     es_mixta = jornada_val == "mixta"
 
     # 3. Crear el registro del sinóptico
+    # Solo una generación a la vez: el algoritmo lee la ocupación de profesores y salas y luego guarda,
+    # y dos generaciones simultáneas podían elegir el mismo profesor/sala en el mismo bloque (error 500).
+    # El candado dura hasta el commit/rollback de esta petición.
+    try:
+        db.execute(text("SET LOCAL lock_timeout = '20s'"))
+        db.execute(text("SELECT pg_advisory_xact_lock(8201)"))
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Hay otra generación en curso. Intenta nuevamente en unos segundos.")
+
     if sinoptico_existente:
         nuevo_sinoptico = sinoptico_existente
     else:
@@ -1176,7 +1187,11 @@ def generar_sinoptico(
             nivel_semestral=datos.nivel_semestral or None,
         )
         db.add(nuevo_sinoptico)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Ya existe un sinóptico con esa carrera/semestre/jornada.")
     jornada_id_fijo = obtener_jornada_id(db, datos.jornada)
 
     # 4. Consultar bloques horarios para la jornada indicada.
@@ -1329,6 +1344,13 @@ def generar_sinoptico(
                          "Generó automáticamente las asignaturas faltantes" if sinoptico_existente else "Generó el sinóptico automáticamente",
                          sinoptico_id=nuevo_sinoptico.id)
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        logger.warning("Choque de horario al guardar el sinóptico generado", exc_info=True)
+        raise HTTPException(
+            status_code=409,
+            detail="Otro usuario ocupó un profesor o sala mientras se generaba. Intenta nuevamente."
+        )
     except Exception:
         db.rollback()
         logger.exception("Error al guardar el sinóptico generado")
