@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Response
+from fastapi.responses import JSONResponse
 from zoneinfo import ZoneInfo
 from pdf_sinoptico import construir_pdf_sinoptico
 from excel_sinoptico import construir_excel_sinoptico
@@ -19,26 +20,21 @@ from sqlalchemy.exc import IntegrityError
 from collections import defaultdict
 from typing import Optional, List
 from sqlalchemy import func, text
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-
-class ColorUpdateRequest(BaseModel):
-    color: str
-
-
-class SemanasUpdateRequest(BaseModel):
-    # Números de semana (1..17) en que se dicta la asignatura. Lista con todas = todas las semanas.
-    semanas: List[int]
 
 from database import engine, get_db, Base
+import config
 import models
 import schemas
 from auth import (
     authenticate_user,
-    create_access_token,
+    borrar_cookie_sesion,
+    emitir_sesion,
     get_current_user,
     hash_password,
-    huella_password,
+    poner_cookie_sesion,
+    rol_de,
     require_admin,
     require_coordinador,
     require_docente,
@@ -46,8 +42,25 @@ from auth import (
 
 logger = logging.getLogger("sinoptico")
 
+
+class ColorUpdateRequest(schemas.Estricto):
+    color: str
+
+    @field_validator("color")
+    @classmethod
+    def _color_hex(cls, v):
+        valor = schemas._normalizar_color(v)
+        if valor is None:
+            raise ValueError("El color es obligatorio.")
+        return valor
+
+
+class SemanasUpdateRequest(schemas.Estricto):
+    # Números de semana (1..17) en que se dicta la asignatura. Lista con todas = todas las semanas.
+    semanas: List[int] = Field(max_length=40)
+
 # APP_ENV=production en el servidor: desactiva la documentación pública (/docs) y activa cabeceras estrictas
-PRODUCCION = os.environ.get("APP_ENV", "development").lower() == "production"
+PRODUCCION = config.PRODUCCION
 
 app = FastAPI(
     title="API de Sistema de Sinópticos - Duoc UC",
@@ -58,22 +71,31 @@ app = FastAPI(
     openapi_url=None if PRODUCCION else "/openapi.json",
 )
 
-# Configuración de CORS: orígenes permitidos desde la variable CORS_ORIGINS (separados por coma)
-origins = [
-    o.strip() for o in os.environ.get(
-        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
-    ).split(",") if o.strip()
-]
-
+# CORS: la sesión viaja en una cookie HttpOnly, así que se permiten credenciales SOLO para orígenes explícitos
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=False,   # la sesión viaja en la cabecera Authorization, no en cookies
+    allow_origins=config.CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+@app.middleware("http")
+async def verificar_origen(request: Request, call_next):
+    """
+    Defensa extra contra CSRF: una petición que modifica datos y declara un Origin debe venir del
+    frontend autorizado (o de este mismo servidor, p. ej. /docs en desarrollo). Los navegadores siempre
+    envían Origin en POST/PUT/PATCH/DELETE; las herramientas sin navegador (curl, Locust) no lo envían.
+    """
+    if request.method.upper() not in ("GET", "HEAD", "OPTIONS"):
+        origen = (request.headers.get("origin") or "").rstrip("/")
+        propio = f"{request.url.scheme}://{request.headers.get('host', '')}"
+        if origen and origen != propio and origen not in config.CORS_ORIGINS:
+            return JSONResponse(status_code=403, content={"detail": "Origen no autorizado"})
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def cabeceras_de_seguridad(request: Request, call_next):
@@ -369,8 +391,8 @@ def home():
 # 1. AUTENTICACIÓN Y SESIÓN
 # ===========================================================================
 
-@app.post("/api/auth/login", response_model=schemas.TokenResponse)
-def login(datos: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
+@app.post("/api/auth/login", response_model=schemas.SesionResponse)
+def login(datos: schemas.LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else None
     db.expire_on_commit = False   # evita una consulta extra: tras el commit no hace falta releer el usuario
     if login_bloqueado(db, str(datos.email).lower(), ip):
@@ -408,17 +430,23 @@ def login(datos: schemas.LoginRequest, request: Request, db: Session = Depends(g
     ))
     db.commit()
 
-    access_token = create_access_token(data={"sub": str(user.id), "pv": huella_password(user.password_hash)})
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user
-    }
+    token, csrf = emitir_sesion(user)
+    poner_cookie_sesion(response, token)   # el JWT solo viaja en la cookie HttpOnly, nunca en el cuerpo
+    return {"user": user, "csrf_token": csrf}
 
 
-@app.get("/api/auth/me", response_model=schemas.UsuarioOut)
-def obtener_usuario_actual(current_user: models.Usuario = Depends(get_current_user)):
-    return current_user
+@app.get("/api/auth/me", response_model=schemas.SesionResponse)
+def obtener_usuario_actual(request: Request, current_user: models.Usuario = Depends(get_current_user)):
+    """El frontend lo llama al cargar: confirma que la cookie sigue vigente y recupera el token CSRF."""
+    return {"user": current_user, "csrf_token": request.state.csrf_token}
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout():
+    """Cierra la sesión borrando la cookie. No exige sesión válida: siempre debe poder salir."""
+    respuesta = Response(status_code=204)
+    borrar_cookie_sesion(respuesta)
+    return respuesta
 
 
 # ===========================================================================
@@ -426,13 +454,13 @@ def obtener_usuario_actual(current_user: models.Usuario = Depends(get_current_us
 # ===========================================================================
 
 @app.get("/api/jornadas", response_model=List[schemas.JornadaOut])
-def listar_jornadas(db: Session = Depends(get_db)):
+def listar_jornadas(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
     """Obtiene el catálogo de Jornadas (Diurna, Vespertina, Mixta)."""
     return db.query(models.Jornada).order_by(models.Jornada.id).all()
 
 
 @app.get("/api/carreras", response_model=List[schemas.CarreraOut])
-def listar_carreras(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def listar_carreras(db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     return db.query(models.Carrera).filter(models.Carrera.activo == True).order_by(models.Carrera.nombre).all()
 
 
@@ -453,7 +481,7 @@ def crear_carrera(datos: schemas.CarreraCreate, db: Session = Depends(get_db), _
 def areas_docentes_carrera(
     carrera_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     """
     Deduce qué áreas de docente (AreaDocenteTipo) son propias de una carrera,
@@ -475,12 +503,12 @@ def areas_docentes_carrera(
 
 
 @app.get("/api/planes-estudio", response_model=List[schemas.PlanEstudioOut])
-def listar_planes_estudio(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def listar_planes_estudio(db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     return db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all()
 
 
 @app.get("/api/semestres", response_model=List[schemas.SemestreOut])
-def listar_semestres(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def listar_semestres(db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     return db.query(models.Semestre).filter(models.Semestre.activo == True).order_by(
         models.Semestre.anio.desc(), models.Semestre.numero.desc()
     ).all()
@@ -491,7 +519,7 @@ def listar_asignaturas(
     carrera_id: Optional[int] = None,
     nivel_semestral: Optional[int] = None,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     query = db.query(models.Asignatura).filter(models.Asignatura.activo == True)
     if carrera_id is not None:
@@ -521,7 +549,7 @@ def listar_profesores(
     bloque_horario_id: Optional[int] = Query(None),
     excluir_item_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente)
+    _: models.Usuario = Depends(require_coordinador)
 ):
     """
     Lista profesores activos.
@@ -678,7 +706,7 @@ async def subir_disponibilidad_docente(
 @app.get("/api/profesores/jornadas")
 def jornadas_profesores(
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     """
     Jornada de cada profesor según los bloques en que está disponible:
@@ -719,7 +747,7 @@ def jornadas_profesores(
 @app.get("/api/profesores/disponibilidad")
 def resumen_disponibilidad_profesores(
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     """Cantidad de bloques disponibles por profesor (para listarlos con su resumen)."""
     filas = (
@@ -764,7 +792,7 @@ def horas_semestre_profesores(
 def disponibilidad_profesor(
     profesor_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     """
     Bloques en los que el profesor está disponible y bloques en los que ya
@@ -827,11 +855,11 @@ def nombre_asignatura(db: Session, asignatura_id: int) -> str:
     return a.nombre if a else f"asignatura {asignatura_id}"
 
 
-class DisponibilidadManualRequest(BaseModel):
-    bloque_horario_ids: List[int]
+class DisponibilidadManualRequest(schemas.Estricto):
+    bloque_horario_ids: List[int] = Field(max_length=200)
     disponible: bool
-    medio: str                 # llamada | correo | presencial | mensaje | solicitud_docente | otro
-    motivo: str                # por qué se hace el cambio / cómo se llegó al acuerdo
+    medio: str = Field(max_length=30)       # llamada | correo | presencial | mensaje | solicitud_docente | otro
+    motivo: str = Field(max_length=500)     # por qué se hace el cambio / cómo se llegó al acuerdo
     # Compatibilidad: sin medio/motivo la petición se rechaza con 422
 
 
@@ -915,19 +943,34 @@ def fijar_disponibilidad_manual(
 # ---------------------------------------------------------------------------
 
 def _profesor_del_usuario(db: Session, usuario: models.Usuario):
+    """
+    Ficha de profesor del usuario docente. Se vincula por CORREO (único en ambas tablas). Solo si ninguna
+    ficha tiene ese correo se intenta por nombre, y únicamente cuando hay UNA coincidencia clara
+    (>= 2 palabras en común y sin empate): así un docente nunca recibe por error la ficha de otro.
+    """
+    correo = (usuario.email or "").strip().lower()
+    por_correo = db.query(models.Profesor).filter(
+        func.lower(models.Profesor.email) == correo, models.Profesor.activo == True
+    ).first()
+    if por_correo:
+        return por_correo
+
     palabras_usuario = set(limpiar_texto(usuario.nombre or "").split())
-    mejor, mejor_score = None, 0
+    puntajes = []
     for p in db.query(models.Profesor).filter(models.Profesor.activo == True).all():
-        palabras_prof = set(limpiar_texto(f"{p.nombre} {p.apellido}").split())
-        score = len(palabras_usuario & palabras_prof)
-        if score >= 2 and score > mejor_score:
-            mejor, mejor_score = p, score
-    return mejor
+        score = len(palabras_usuario & set(limpiar_texto(f"{p.nombre} {p.apellido}").split()))
+        if score >= 2:
+            puntajes.append((score, p))
+    if not puntajes:
+        return None
+    mejor = max(sc for sc, _ in puntajes)
+    candidatos = [p for sc, p in puntajes if sc == mejor]
+    return candidatos[0] if len(candidatos) == 1 else None
 
 
 @app.get("/api/docente/mis-cambios")
 def mis_cambios_docente(
-    limite: int = 100,
+    limite: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     usuario: models.Usuario = Depends(require_docente),
 ):
@@ -1073,7 +1116,7 @@ def listar_salas(db: Session = Depends(get_db), _: models.Usuario = Depends(requ
 
 
 @app.get("/api/bloques-horario", response_model=List[schemas.BloqueHorarioOut])
-def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     return db.query(models.BloqueHorario).order_by(
         models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio
     ).all()
@@ -1098,11 +1141,12 @@ def crear_sinoptico_vacio(
     Crea un sinóptico vacío (sin generar automáticamente ninguna clase), para
     que el coordinador lo arme manualmente desde cero usando el '+' de la grilla.
     """
+    validar_carrera_semestre(db, datos.carrera_id, datos.semestre_id)
     nuevo = models.Sinoptico(
         carrera_id=datos.carrera_id,
         semestre_id=datos.semestre_id,
         jornada=datos.jornada,
-        creado_por_id=usuario.id,
+        creado_por_id=usuario.id,          # el autor lo fija el servidor, nunca el cliente
         nivel_semestral=datos.nivel_semestral or None,
     )
     db.add(nuevo)
@@ -1137,10 +1181,13 @@ def generar_sinoptico(
         sinoptico_existente = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
         if not sinoptico_existente:
             raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
-        asegurar_sinoptico_editable(sinoptico_existente)
+        asegurar_sinoptico_editable(sinoptico_existente, usuario)
         # Carrera y jornada son las del sinóptico, no las del filtro
         datos.carrera_id = sinoptico_existente.carrera_id
         datos.jornada = sinoptico_existente.jornada
+
+    if not sinoptico_existente:
+        validar_carrera_semestre(db, datos.carrera_id, datos.semestre_id)
 
     # 1. Validar existencia de asignaturas activas para la carrera/escuela
     #    (opcionalmente filtradas por nivel_semestral, si viene en la petición)
@@ -1366,7 +1413,7 @@ def generar_sinoptico(
 
 
 @app.get("/api/sinopticos")
-def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = Depends(require_docente)):
+def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = Depends(require_coordinador)):
     filas = (
         db.query(models.Sinoptico, models.Carrera, models.Semestre)
         .join(models.Carrera, models.Sinoptico.carrera_id == models.Carrera.id)
@@ -1405,7 +1452,11 @@ def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = D
     for p in db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all():
         planes_carrera[p.carrera_id].append(p.id)
 
-    nombres_usuarios = {uid: nombre for uid, nombre in db.query(models.Usuario.id, models.Usuario.nombre).all()}
+    ids_autores = {sin.creado_por_id for sin, _, _ in filas if sin.creado_por_id is not None}
+    nombres_usuarios = (
+        {uid: nombre for uid, nombre in db.query(models.Usuario.id, models.Usuario.nombre).filter(models.Usuario.id.in_(ids_autores)).all()}
+        if ids_autores else {}
+    )
 
     resultado = []
     for sinoptico, carrera, semestre in filas:
@@ -1448,7 +1499,7 @@ def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = D
 def filtros_de_sinoptico(
     sinoptico_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     """
     Datos para rellenar los filtros de la izquierda al abrir un sinóptico:
@@ -1504,18 +1555,70 @@ def filtros_de_sinoptico(
     }
 
 
-def asegurar_sinoptico_editable(sinoptico: "models.Sinoptico"):
+def exigir_autoria(sinoptico: "models.Sinoptico", usuario: models.Usuario):
     """
-    Bloquea cualquier alta/edición/baja de bloques sobre un sinóptico ya
-    finalizado. Hay que reabrirlo primero
-    (PATCH /sinopticos/{id}/finalizado con finalizado=false) para poder
-    volver a editarlo.
+    Un coordinador solo modifica los sinópticos que él creó; el administrador modifica todos.
+    (Se apaga con COORDINADOR_EDITA_SOLO_LO_SUYO=0 si varios coordinadores comparten carreras.)
+    Un sinóptico sin autor (usuario eliminado) solo lo modifica un administrador.
     """
+    if rol_de(usuario) == "administrador" or not config.COORDINADOR_EDITA_SOLO_LO_SUYO:
+        return
+    if sinoptico.creado_por_id is None or sinoptico.creado_por_id != usuario.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Este sinóptico lo creó otro usuario. Solo su autor o un administrador puede modificarlo.",
+        )
+
+
+def asegurar_sinoptico_editable(sinoptico: "models.Sinoptico", usuario: models.Usuario):
+    """
+    Exige ser autor (o administrador) y bloquea cualquier alta/edición/baja de bloques sobre un sinóptico
+    finalizado. Hay que reabrirlo primero (PATCH /sinopticos/{id}/finalizado con finalizado=false).
+    """
+    exigir_autoria(sinoptico, usuario)
     if sinoptico.finalizado:
         raise HTTPException(
             status_code=400,
             detail="Este sinóptico está finalizado. Reábrelo antes de poder editarlo.",
         )
+
+
+def validar_carrera_semestre(db: Session, carrera_id: int, semestre_id: int):
+    if not db.query(models.Carrera.id).filter(models.Carrera.id == carrera_id, models.Carrera.activo == True).first():
+        raise HTTPException(status_code=404, detail="La carrera indicada no existe o está inactiva.")
+    if not db.query(models.Semestre.id).filter(models.Semestre.id == semestre_id, models.Semestre.activo == True).first():
+        raise HTTPException(status_code=404, detail="El semestre indicado no existe o está inactivo.")
+
+
+def validar_referencias_item(
+    db: Session, sinoptico: "models.Sinoptico", bloque: "models.BloqueHorario",
+    asignatura_id: Optional[int] = None, profesor_id: Optional[int] = None, sala_id: Optional[int] = None,
+):
+    """
+    El servidor no se fía de los ids que manda el cliente. Solo se revisa lo que se pasa (lo que cambia):
+    la asignatura debe ser de la carrera del sinóptico, profesor y sala deben existir y estar activos,
+    y el bloque debe ser de la jornada del sinóptico (salvo que sea mixto).
+    """
+    if asignatura_id is not None:
+        ok = db.query(models.Asignatura.id).join(
+            models.PlanEstudio, models.Asignatura.plan_estudio_id == models.PlanEstudio.id
+        ).filter(
+            models.Asignatura.id == asignatura_id,
+            models.Asignatura.activo == True,
+            models.PlanEstudio.carrera_id == sinoptico.carrera_id,
+        ).first()
+        if not ok:
+            raise HTTPException(status_code=400, detail="La asignatura no pertenece a la carrera de este sinóptico o está inactiva.")
+    if profesor_id is not None:
+        if not db.query(models.Profesor.id).filter(models.Profesor.id == profesor_id, models.Profesor.activo == True).first():
+            raise HTTPException(status_code=400, detail="El profesor indicado no existe o está inactivo.")
+    if sala_id is not None:
+        if not db.query(models.Sala.id).filter(models.Sala.id == sala_id, models.Sala.activo == True).first():
+            raise HTTPException(status_code=400, detail="La sala indicada no existe o está inactiva.")
+    jornada_sin = sinoptico.jornada.value if hasattr(sinoptico.jornada, "value") else str(sinoptico.jornada)
+    jornada_blo = bloque.jornada.value if hasattr(bloque.jornada, "value") else str(bloque.jornada)
+    if jornada_sin != "mixta" and jornada_blo != jornada_sin:
+        raise HTTPException(status_code=400, detail="El bloque horario no corresponde a la jornada de este sinóptico.")
 
 
 def calcular_cumplimiento_horas(db: Session, sinoptico_id: int):
@@ -1568,7 +1671,7 @@ def calcular_cumplimiento_horas(db: Session, sinoptico_id: int):
 def horas_por_asignatura(
     sinoptico_id: int,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(require_docente),
+    _: models.Usuario = Depends(require_coordinador),
 ):
     """
     Horas requeridas vs. programadas de cada asignatura del sinóptico (18
@@ -1581,7 +1684,7 @@ def horas_por_asignatura(
     return calcular_cumplimiento_horas(db, sinoptico_id)
 
 
-class FinalizadoUpdateRequest(BaseModel):
+class FinalizadoUpdateRequest(schemas.Estricto):
     finalizado: bool
 
 
@@ -1601,6 +1704,7 @@ def actualizar_finalizado_sinoptico(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    exigir_autoria(sinoptico, usuario)
 
     if datos.finalizado and not sinoptico.finalizado:
         resumen = calcular_cumplimiento_horas(db, sinoptico_id)
@@ -1634,7 +1738,7 @@ def actualizar_finalizado_sinoptico(
 
 
 @app.get("/api/sinopticos/eventos")
-def eventos_todos_los_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def eventos_todos_los_sinopticos(db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     """
     Trae en UNA sola consulta los eventos de TODOS los sinópticos, agrupados
     por sinoptico_id. Reemplaza el patrón N+1 de pedir
@@ -1682,7 +1786,7 @@ def eventos_todos_los_sinopticos(db: Session = Depends(get_db), _: models.Usuari
 
 
 @app.get("/api/sinopticos/{sinoptico_id}/eventos")
-def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(require_docente)):
+def eventos_sinoptico(sinoptico_id: int, db: Session = Depends(get_db), _: models.Usuario = Depends(require_coordinador)):
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
@@ -2042,7 +2146,7 @@ def agregar_item_sinoptico(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == datos.sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
-    asegurar_sinoptico_editable(sinoptico)
+    asegurar_sinoptico_editable(sinoptico, usuario)
 
     asignatura = db.query(models.Asignatura).filter(models.Asignatura.id == datos.asignatura_id).first()
     if not asignatura:
@@ -2051,6 +2155,7 @@ def agregar_item_sinoptico(
     bloque = db.query(models.BloqueHorario).filter(models.BloqueHorario.id == datos.bloque_horario_id).first()
     if not bloque:
         raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
+    validar_referencias_item(db, sinoptico, bloque, datos.asignatura_id, datos.profesor_id, datos.sala_id)
     # Si la asignatura ya tiene semanas elegidas en este sinóptico, el bloque nuevo las hereda
     hermano = db.query(models.SinopticoItem).filter(
         models.SinopticoItem.sinoptico_id == datos.sinoptico_id,
@@ -2127,13 +2232,19 @@ def editar_item_sinoptico(
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
-    asegurar_sinoptico_editable(sinoptico)
+    asegurar_sinoptico_editable(sinoptico, usuario)
 
     bloque = db.query(models.BloqueHorario).filter(
         models.BloqueHorario.id == datos.bloque_horario_id
     ).first()
     if not bloque:
         raise HTTPException(status_code=404, detail="El bloque horario indicado no existe.")
+    validar_referencias_item(
+        db, sinoptico, bloque,
+        asignatura_id=datos.asignatura_id if datos.asignatura_id != item.asignatura_id else None,
+        profesor_id=datos.profesor_id if datos.profesor_id != item.profesor_id else None,
+        sala_id=datos.sala_id if datos.sala_id != item.sala_id else None,
+    )
 
     if datos.profesor_id is not None:
         choque_profesor = db.query(models.SinopticoItem).filter(
@@ -2162,10 +2273,8 @@ def editar_item_sinoptico(
             raise HTTPException(status_code=404, detail="La asignatura indicada no existe.")
         item.seccion = generar_seccion(db, item.sinoptico_id, asignatura, jornada_para_item)
 
-    if datos.jornada_id is not None:
-        item.jornada_id = datos.jornada_id
-    else:
-        item.jornada_id = obtener_jornada_id(db, jornada_para_item)
+    # La jornada del bloque la deduce el servidor; el cliente no puede fijarla
+    item.jornada_id = obtener_jornada_id(db, jornada_para_item)
 
     item.asignatura_id = datos.asignatura_id
     item.profesor_id = datos.profesor_id
@@ -2207,7 +2316,7 @@ def mover_item_sinoptico(
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
 
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
-    asegurar_sinoptico_editable(sinoptico)
+    asegurar_sinoptico_editable(sinoptico, usuario)
     sinoptico_jornada_val = sinoptico.jornada.value if hasattr(sinoptico.jornada, 'value') else str(sinoptico.jornada)
 
     # Si el sinóptico es "mixto", el bloque se busca por día/hora sin exigir una
@@ -2290,7 +2399,7 @@ def actualizar_color_asignatura(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
-    asegurar_sinoptico_editable(sinoptico)
+    asegurar_sinoptico_editable(sinoptico, usuario)
 
     items = db.query(models.SinopticoItem).filter(
         models.SinopticoItem.sinoptico_id == sinoptico_id,
@@ -2330,7 +2439,7 @@ def actualizar_semanas_asignatura(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
-    asegurar_sinoptico_editable(sinoptico)
+    asegurar_sinoptico_editable(sinoptico, usuario)
 
     validas = sorted({w for w in datos.semanas if 1 <= w <= SEMANAS_DEFAULT})
     if not validas:
@@ -2372,7 +2481,7 @@ def eliminar_item_sinoptico(
     if not item:
         raise HTTPException(status_code=404, detail="El bloque de horario indicado no existe.")
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == item.sinoptico_id).first()
-    asegurar_sinoptico_editable(sinoptico)
+    asegurar_sinoptico_editable(sinoptico, usuario)
     registrar_cambio(
         db, usuario, "bloque_eliminado", "sinoptico",
         f"Eliminó {nombre_asignatura(db, item.asignatura_id)} de {describir_bloque(db, item.bloque_horario_id)}",
@@ -2392,6 +2501,7 @@ def eliminar_sinoptico(
     sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
     if not sinoptico:
         raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
+    exigir_autoria(sinoptico, usuario)
     registrar_cambio(db, usuario, "sinoptico_eliminado", "sinoptico",
                      "Eliminó el sinóptico completo", sinoptico_id=sinoptico_id)
     db.delete(sinoptico)
@@ -2421,7 +2531,7 @@ def _registro_a_dict(r: "models.RegistroCambio") -> dict:
 @app.get("/api/sinopticos/{sinoptico_id}/historial")
 def historial_sinoptico(
     sinoptico_id: int,
-    limite: int = 200,
+    limite: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_coordinador),
 ):
@@ -2435,7 +2545,7 @@ def historial_sinoptico(
 @app.get("/api/profesores/{profesor_id}/historial")
 def historial_disponibilidad_profesor(
     profesor_id: int,
-    limite: int = 200,
+    limite: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_coordinador),
 ):
@@ -2449,7 +2559,7 @@ def historial_disponibilidad_profesor(
 
 @app.get("/api/admin/bitacora")
 def bitacora_general(
-    limite: int = 300,
+    limite: int = Query(300, ge=1, le=500),
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_admin),
 ):
@@ -2494,7 +2604,7 @@ def crear_usuario(
 
 @app.get("/api/admin/auditoria", response_model=List[schemas.LoginLogOut])
 def listar_auditoria(
-    limite: int = 100,
+    limite: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(require_admin),
 ):

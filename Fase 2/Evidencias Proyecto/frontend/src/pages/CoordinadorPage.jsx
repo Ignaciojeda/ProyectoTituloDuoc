@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
+import { useAuth } from '../auth/AuthContext'
 import api from "../api/client";
 import '../duoc.css'
 
 export default function CoordinadorPage() {
-  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const { user } = useAuth()
 
   const descargarSabana = async () => {
   try {
@@ -29,7 +30,7 @@ export default function CoordinadorPage() {
           Panel de Coordinación Académica
         </h2>
         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '15px' }}>
-          Bienvenido/a, <strong>{user.nombre || 'Coordinador'}</strong>. Planifique y organice los horarios de asignaturas y la disponibilidad docente.
+          Bienvenido/a, <strong>{user?.nombre || 'Coordinador'}</strong>. Planifique y organice los horarios de asignaturas y la disponibilidad docente.
         </p>
       </div>
 

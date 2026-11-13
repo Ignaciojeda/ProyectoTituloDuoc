@@ -1,11 +1,13 @@
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 
 export default function Navbar() {
   const navigate = useNavigate()
-  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const { user: usuarioSesion, logout } = useAuth()
+  const user = usuarioSesion || {}
 
-  const handleLogout = () => {
-    localStorage.clear()
+  const handleLogout = async () => {
+    await logout()   // el servidor borra la cookie de sesión
     navigate('/login')
   }
 

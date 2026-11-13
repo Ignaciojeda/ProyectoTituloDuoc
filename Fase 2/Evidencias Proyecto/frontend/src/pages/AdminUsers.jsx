@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import api from "../api/client";
 import Navbar from '../components/Navbar'
+import { useAuth } from '../auth/AuthContext'
 import '../duoc.css'
 
 const ROLES = [
@@ -18,7 +19,8 @@ export default function AdminUsers() {
   const [users, setUsers]                 = useState([])
   const [loading, setLoading]             = useState(true)
   const [error, setError]                 = useState(null)
-  const [currentUserId, setCurrentUserId] = useState(null)
+  const { user: usuarioSesion } = useAuth()
+  const currentUserId = usuarioSesion?.id ?? null
 
   // Estado para la subida de disponibilidad docente
   const [uploadingDisp, setUploadingDisp] = useState(false)
@@ -35,10 +37,6 @@ export default function AdminUsers() {
   const [delTarget, setDelTarget] = useState(null)
 
   useEffect(() => {
-    const stored = localStorage.getItem('user')
-    if (stored) {
-      try { setCurrentUserId(JSON.parse(stored).id) } catch {}
-    }
     fetchUsers()
   }, [])
 

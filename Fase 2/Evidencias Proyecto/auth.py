@@ -1,37 +1,43 @@
 """
-Módulo de autenticación y autorización con JWT para cliente React.
+Autenticación y autorización del lado del servidor.
+
+- La sesión es un JWT guardado en una cookie HttpOnly (JavaScript no puede leerla, así que un XSS no la roba).
+- Como el navegador envía la cookie solo, toda petición que modifica datos (POST/PUT/PATCH/DELETE) debe traer
+  además la cabecera X-CSRF-Token. Ese valor va dentro del JWT (claim "csrf"), se entrega al frontend en la
+  respuesta de /auth/login y /auth/me, y un sitio ajeno no puede leerlo (CORS).
+- Las comprobaciones viven en las dependencias (get_current_user / require_role): ningún endpoint las
+  puede olvidar sin quedar visiblemente desprotegido.
 """
 import hashlib
 import hmac
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 import config
 import models
-import schemas
 from database import get_db
 
-# Configuración JWT (la clave viene SOLO del entorno; si falta, la app no arranca)
 SECRET_KEY = config.SECRET_KEY
 ALGORITHM = config.JWT_ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = config.ACCESS_TOKEN_MINUTES
 
+COOKIE_NAME = config.COOKIE_NAME
+CSRF_HEADER = "X-CSRF-Token"
+METODOS_SEGUROS = {"GET", "HEAD", "OPTIONS"}
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Endpoint desde el cual Swagger UI o React obtienen el token
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-
-# Hash de una contraseña inexistente: se usa para que el login tarde lo mismo exista o no el correo
+# Hash de una contraseña inexistente: el login tarda lo mismo exista o no el correo
 _HASH_FALSO: Optional[str] = None
 
 
-# --- Hashing de contraseñas ----------------------------------------------------
+# --- Contraseñas ---------------------------------------------------------------
 
 def hash_password(plain: str) -> str:
     return pwd_context.hash(plain)
@@ -45,14 +51,11 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def huella_password(password_hash: str) -> str:
-    """
-    Huella corta de la contraseña actual. Va dentro del token: si el usuario cambia su contraseña,
-    la huella cambia y todos los tokens anteriores dejan de ser válidos.
-    """
+    """Huella corta de la contraseña actual: si el usuario la cambia, los tokens anteriores dejan de valer."""
     return hmac.new(SECRET_KEY.encode(), password_hash.encode(), hashlib.sha256).hexdigest()[:16]
 
 
-# --- Tokens JWT ----------------------------------------------------------------
+# --- Sesión (JWT en cookie HttpOnly) -------------------------------------------
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
@@ -62,7 +65,52 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-# --- Autenticación y Dependencias ---------------------------------------------
+def emitir_sesion(user: models.Usuario) -> tuple[str, str]:
+    """Devuelve (jwt, csrf_token). El csrf_token viaja dentro del JWT y también se entrega al frontend."""
+    csrf = secrets.token_urlsafe(32)
+    token = create_access_token({
+        "sub": str(user.id),
+        "pv": huella_password(user.password_hash),
+        "csrf": csrf,
+        "jti": secrets.token_hex(8),
+    })
+    return token, csrf
+
+
+def poner_cookie_sesion(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",                       # requisito del prefijo __Host-
+        domain=config.COOKIE_DOMAIN,
+        secure=config.COOKIE_SECURE,
+        httponly=True,                  # inaccesible desde JavaScript
+        samesite=config.COOKIE_SAMESITE,
+    )
+
+
+def borrar_cookie_sesion(response: Response) -> None:
+    # Los atributos deben coincidir con los de set_cookie, o el navegador no la elimina
+    response.delete_cookie(
+        key=COOKIE_NAME, path="/", domain=config.COOKIE_DOMAIN,
+        secure=config.COOKIE_SECURE, httponly=True, samesite=config.COOKIE_SAMESITE,
+    )
+
+
+def _extraer_token(request: Request) -> tuple[Optional[str], bool]:
+    """(token, vino_por_cookie). La cookie manda; la cabecera Bearer solo si se habilitó expresamente."""
+    token = request.cookies.get(COOKIE_NAME)
+    if token:
+        return token, True
+    if config.PERMITIR_BEARER:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer ") and len(auth) > 7:
+            return auth[7:].strip(), False
+    return None, False
+
+
+# --- Autenticación y dependencias ----------------------------------------------
 
 def authenticate_user(db: Session, email: str, password: str) -> Optional[models.Usuario]:
     global _HASH_FALSO
@@ -72,7 +120,6 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[models
         .first()
     )
     if not user:
-        # Verifica contra un hash falso para no revelar (por el tiempo de respuesta) qué correos existen
         if _HASH_FALSO is None:
             _HASH_FALSO = pwd_context.hash("contrasena-inexistente")
         verify_password(password, _HASH_FALSO)
@@ -82,51 +129,52 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[models
     return user
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> models.Usuario:
+    credenciales_invalidas = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No se pudieron validar las credenciales",
-        headers={"WWW-Authenticate": "Bearer"},
     )
+    token, por_cookie = _extraer_token(request)
+    if not token:
+        raise credenciales_invalidas
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"require_exp": True})
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-
-    try:
-        user_id_int = int(user_id)
-    except (TypeError, ValueError):
-        raise credentials_exception
+        user_id = int(payload.get("sub"))
+    except (JWTError, TypeError, ValueError):
+        raise credenciales_invalidas
 
     user = db.query(models.Usuario).filter(
-        models.Usuario.id == user_id_int,
-        models.Usuario.activo == True
+        models.Usuario.id == user_id, models.Usuario.activo == True
     ).first()
-
     if user is None:
-        raise credentials_exception
+        raise credenciales_invalidas
 
     # El token solo vale mientras la contraseña no haya cambiado desde que se emitió
     if not hmac.compare_digest(str(payload.get("pv", "")), huella_password(user.password_hash)):
-        raise credentials_exception
+        raise credenciales_invalidas
+
+    csrf_sesion = str(payload.get("csrf", ""))
+    # CSRF: solo aplica a la cookie (el navegador la adjunta solo); una cabecera Bearer no se adjunta sola
+    if por_cookie and request.method.upper() not in METODOS_SEGUROS:
+        enviado = request.headers.get(CSRF_HEADER, "")
+        if not csrf_sesion or not hmac.compare_digest(enviado, csrf_sesion):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token CSRF ausente o inválido")
+
+    request.state.csrf_token = csrf_sesion
     return user
 
 
+def rol_de(user: models.Usuario) -> str:
+    rol = user.rol
+    return str(rol.value if hasattr(rol, "value") else rol).split(".")[-1].lower()
+
+
 def require_role(*roles: str):
-    allowed: set[str] = {r.lower() for r in roles}
+    permitidos = {r.lower() for r in roles}
 
     def _dep(current_user: models.Usuario = Depends(get_current_user)) -> models.Usuario:
-        # Extrae de forma segura el valor en texto del rol
-        if hasattr(current_user.rol, 'value'):
-            user_role = str(current_user.rol.value).lower()
-        else:
-            raw_role = str(current_user.rol)
-            user_role = raw_role.split('.')[-1].lower() if '.' in raw_role else raw_role.lower()
-
-        if user_role not in allowed:
+        if rol_de(current_user) not in permitidos:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tiene permiso para acceder a este recurso",
@@ -136,7 +184,7 @@ def require_role(*roles: str):
     return _dep
 
 
-# Atajos por rol
+# Atajos por rol. require_docente = cualquier usuario autenticado (docente o superior).
 require_admin = require_role("administrador")
 require_coordinador = require_role("coordinador", "administrador")
 require_docente = require_role("docente", "coordinador", "administrador")

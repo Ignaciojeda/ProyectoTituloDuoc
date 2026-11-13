@@ -1,8 +1,16 @@
 import re
 from datetime import date, time, datetime
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from models import JornadaTipo, AreaDocenteTipo, RolUsuario, EdificioTipo
 from typing import Optional, List
+
+
+class Estricto(BaseModel):
+    """
+    Base de TODO lo que el cliente envía: rechaza (422) cualquier campo no declarado, en vez de ignorarlo
+    en silencio. Así no se pueden colar campos como rol, activo, creado_por_id, finalizado o password_hash.
+    """
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 # --- Jornada ---
@@ -16,9 +24,9 @@ class JornadaOut(BaseModel):
 
 
 # --- Carrera ---
-class CarreraCreate(BaseModel):
-    codigo: str
-    nombre: str
+class CarreraCreate(Estricto):
+    codigo: str = Field(min_length=1, max_length=50)
+    nombre: str = Field(min_length=1, max_length=150)
 
 class CarreraOut(CarreraCreate):
     id: int
@@ -28,10 +36,10 @@ class CarreraOut(CarreraCreate):
 
 
 # --- Plan de estudio ---
-class PlanEstudioCreate(BaseModel):
-    carrera_id: int
-    codigo: str
-    nombre: str
+class PlanEstudioCreate(Estricto):
+    carrera_id: int = Field(ge=1)
+    codigo: str = Field(min_length=1, max_length=50)
+    nombre: str = Field(min_length=1, max_length=100)
     vigente_desde: date
     vigente_hasta: Optional[date] = None
 
@@ -58,7 +66,6 @@ class SemestreOut(BaseModel):
 # --- Profesor ---
 class ProfesorOut(BaseModel):
     id: int
-    rut: str
     nombre: str
     apellido: str
     email: str
@@ -70,14 +77,20 @@ class ProfesorOut(BaseModel):
 
 
 # --- Asignatura ---
-class AsignaturaCreate(BaseModel):
+class AsignaturaCreate(Estricto):
+    codigo: str = Field(min_length=1, max_length=50)
+    nombre: str = Field(min_length=1, max_length=200)
+    plan_estudio_id: Optional[int] = Field(default=None, ge=1)
+    horas: Optional[int] = Field(default=None, ge=1, le=500)
+    nivel_semestral: Optional[int] = Field(default=None, ge=1, le=12)
+
+class AsignaturaOut(BaseModel):
+    id: int
+    codigo: str
     nombre: str
     plan_estudio_id: Optional[int] = None
     horas: Optional[int] = None
     nivel_semestral: Optional[int] = None
-
-class AsignaturaOut(AsignaturaCreate):
-    id: int
 
     class Config:
         from_attributes = True
@@ -108,12 +121,12 @@ class BloqueHorarioOut(BaseModel):
 
 
 # --- Generar sinóptico ---
-class GenerarSinopticoRequest(BaseModel):
-    carrera_id: int
-    semestre_id: int
+class GenerarSinopticoRequest(Estricto):
+    carrera_id: int = Field(ge=1)
+    semestre_id: int = Field(ge=1)
     jornada: JornadaTipo = JornadaTipo.diurno
-    plan_estudio_id: Optional[int] = None
-    nivel_semestral: Optional[int] = None
+    plan_estudio_id: Optional[int] = Field(default=None, ge=1)
+    nivel_semestral: Optional[int] = Field(default=None, ge=0, le=12)
 
 
 class SinopticoOut(BaseModel):
@@ -129,7 +142,7 @@ class SinopticoOut(BaseModel):
 
 
 # --- Mover ítem ---
-class MoverItemRequest(BaseModel):
+class MoverItemRequest(Estricto):
     dia_semana: int = Field(ge=1, le=6)
     hora_inicio: time
     hora_fin: time
@@ -150,7 +163,36 @@ def _normalizar_color(valor):
 
 
 # --- Sinóptico Item ---
-class SinopticoItemCreate(BaseModel):
+class SinopticoItemCreate(Estricto):
+    # La jornada del bloque NO la envía el cliente: el servidor la deduce del sinóptico y del bloque.
+    sinoptico_id: int = Field(ge=1)
+    asignatura_id: int = Field(ge=1)
+    profesor_id: Optional[int] = Field(default=None, ge=1)
+    sala_id: Optional[int] = Field(default=None, ge=1)
+    bloque_horario_id: int = Field(ge=1)
+    capacidad_inicial: Optional[int] = Field(default=None, ge=0, le=1000)
+    color: Optional[str] = None
+
+    @field_validator("color")
+    @classmethod
+    def validar_color(cls, v):
+        return _normalizar_color(v)
+
+class SinopticoItemUpdate(Estricto):
+    asignatura_id: int = Field(ge=1)
+    profesor_id: Optional[int] = Field(default=None, ge=1)
+    sala_id: Optional[int] = Field(default=None, ge=1)
+    bloque_horario_id: int = Field(ge=1)
+    capacidad_inicial: Optional[int] = Field(default=None, ge=0, le=1000)
+    color: Optional[str] = None
+
+    @field_validator("color")
+    @classmethod
+    def validar_color(cls, v):
+        return _normalizar_color(v)
+
+class SinopticoItemOut(BaseModel):
+    id: int
     sinoptico_id: int
     asignatura_id: int
     profesor_id: Optional[int] = None
@@ -159,29 +201,6 @@ class SinopticoItemCreate(BaseModel):
     jornada_id: Optional[int] = None
     capacidad_inicial: Optional[int] = None
     color: Optional[str] = None
-
-    @field_validator("color")
-    @classmethod
-    def validar_color(cls, v):
-        return _normalizar_color(v)
-
-class SinopticoItemUpdate(BaseModel):
-    asignatura_id: int
-    profesor_id: Optional[int] = None
-    sala_id: Optional[int] = None
-    bloque_horario_id: int
-    jornada_id: Optional[int] = None
-    capacidad_inicial: Optional[int] = None
-    color: Optional[str] = None
-
-    @field_validator("color")
-    @classmethod
-    def validar_color(cls, v):
-        return _normalizar_color(v)
-
-class SinopticoItemOut(SinopticoItemCreate):
-    id: int
-    capacidad_inicial: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -199,7 +218,7 @@ class UsuarioOut(BaseModel):
         from_attributes = True
 
 
-class UsuarioCreate(BaseModel):
+class UsuarioCreate(Estricto):
     nombre: str = Field(min_length=2, max_length=100)
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
@@ -221,11 +240,11 @@ class LoginLogOut(BaseModel):
 
 
 # --- Auth ---
-class LoginRequest(BaseModel):
+class LoginRequest(Estricto):
     email: EmailStr
-    password: str = Field(min_length=4)
+    password: str = Field(min_length=4, max_length=128)
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class SesionResponse(BaseModel):
+    """El JWT NO viaja aquí: va solo en la cookie HttpOnly. csrf_token se reenvía en la cabecera X-CSRF-Token."""
     user: UsuarioOut
+    csrf_token: str

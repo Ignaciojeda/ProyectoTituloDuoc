@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import api from "../api/client";
+import { useAuth } from '../auth/AuthContext'
 import '../duoc.css'
 
 export default function LoginPage() {
@@ -8,21 +8,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const navigate = useNavigate()
+  const { login } = useAuth()
 
   const handleLogin = async (e) => {
     e.preventDefault()
     setError('')
     try {
-      const { data } = await api.post('/auth/login', { email, password })
-      localStorage.setItem('token', data.access_token)
-      localStorage.setItem('user', JSON.stringify(data.user))
+      const usuario = await login(email, password)   // el servidor deja la sesión en una cookie HttpOnly
 
-      const rol = data.user.rol.toLowerCase()
+      const rol = usuario.rol.toLowerCase()
       if (rol === 'administrador') navigate('/admin')
       else if (rol === 'coordinador') navigate('/coordinador')
       else navigate('/docente')
     } catch (err) {
-      setError('Credenciales inválidas')
+      // 429 = demasiados intentos: el servidor explica cuánto esperar
+      setError(err.response?.status === 429 ? err.response.data.detail : 'Credenciales inválidas')
     }
   }
 

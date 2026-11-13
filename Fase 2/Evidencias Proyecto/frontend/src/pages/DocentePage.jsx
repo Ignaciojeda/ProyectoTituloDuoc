@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
+import { useAuth } from '../auth/AuthContext'
 import api from "../api/client";
 import '../duoc.css'
 
 export default function DocentePage() {
-  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  const { user } = useAuth()
   const [archivo, setArchivo] = useState(null)
   const [subiendo, setSubiendo] = useState(false)
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' })
@@ -46,7 +47,7 @@ export default function DocentePage() {
           Portal Docente - Carga Académica
         </h2>
         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '15px' }}>
-          Bienvenido/a, <strong>{user.nombre || 'Docente'}</strong>. Consulte sus clases asignadas y envíe su disponibilidad horaria.
+          Bienvenido/a, <strong>{user?.nombre || 'Docente'}</strong>. Consulte sus clases asignadas y envíe su disponibilidad horaria.
         </p>
       </div>
 
