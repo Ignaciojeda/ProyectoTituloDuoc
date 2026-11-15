@@ -1,0 +1,20 @@
+# Imagen de PRODUCCIÓN del frontend: compila React y lo sirve con nginx (sin Node en producción).
+
+# --- Etapa 1: compilar ---
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+# "/api" = misma dirección que la web: nginx reenvía /api al backend. Así el navegador ve UN solo sitio
+# y la cookie de sesión es de mismo origen (sin CORS ni problemas de SameSite).
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
+RUN npm run build
+
+# --- Etapa 2: servir ---
+FROM nginx:1.27-alpine
+# La imagen oficial reemplaza ${API_UPSTREAM} (variable de entorno) al arrancar
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80

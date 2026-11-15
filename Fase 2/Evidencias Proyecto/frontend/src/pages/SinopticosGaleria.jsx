@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import api from '../api/client'
 import { colorValido } from '../utils/color'
-import { descargarPdfSinoptico, descargarExcelSinoptico } from '../utils/pdf'
+import { descargarPdfSinoptico, descargarExcelSinoptico } from '../utils/Pdf'
 import '../duoc.css'
 
 const MODULOS_DUOC = [

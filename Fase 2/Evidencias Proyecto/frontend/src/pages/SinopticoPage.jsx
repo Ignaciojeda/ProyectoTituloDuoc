@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar'
 import api from '../api/client'
 import SelectorColor from '../components/SelectorColor'
 import { COLOR_DEFAULT, colorValido, colorTextoSobre } from '../utils/color'
-import { descargarPdfSinoptico, descargarExcelSinoptico } from '../utils/pdf'
+import { descargarPdfSinoptico, descargarExcelSinoptico } from '../utils/Pdf'
 import '../duoc.css'
 
 const MODULOS_DUOC = [

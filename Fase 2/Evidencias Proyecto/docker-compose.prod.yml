@@ -1,0 +1,27 @@
+# Prueba LOCAL de la arquitectura de producción (2 contenedores, igual que en Azure):
+#   docker compose -f docker-compose.prod.yml up --build
+# y abrir http://localhost:8080
+# Usa el mismo .env (misma base de datos) que el desarrollo.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    env_file: .env
+    environment:
+      APP_ENV: development                 # local no tiene HTTPS: la cookie no puede ser Secure
+      CORS_ORIGINS: http://localhost:8080
+    # sin "ports": el navegador nunca habla directo con la API, solo a través de nginx
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: /api
+    environment:
+      API_UPSTREAM: http://api:8000
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
