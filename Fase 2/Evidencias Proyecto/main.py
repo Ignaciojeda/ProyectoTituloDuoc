@@ -307,27 +307,35 @@ def tamanos_sesiones(asignatura):
         tamanos.append(1)
     return tamanos
 
+def jornada_de_bloque(b):
+    j = b.jornada
+    return j.value if hasattr(j, "value") else str(j)
+
 def pares_consecutivos(bloques):
-    por_dia = defaultdict(list)
+    """Pares de módulos seguidos del mismo día y de la MISMA jornada.
+    En un sinóptico mixto nunca se une el último módulo diurno con el primero vespertino."""
+    grupos = defaultdict(list)
     for b in sorted(bloques, key=lambda b: (b.dia_semana, b.hora_inicio)):
-        por_dia[b.dia_semana].append(b)
+        grupos[(b.dia_semana, jornada_de_bloque(b))].append(b)
     pares = []
-    for dia in sorted(por_dia):
-        lista = por_dia[dia]
+    for clave in sorted(grupos):
+        lista = grupos[clave]
         for i in range(len(lista) - 1):
             pares.append((lista[i], lista[i + 1]))
     return pares
 
 def ranuras_con_ventanas(bloques):
-    """Clases de 2 módulos con 1 a 4 módulos libres entre una y otra, de lunes a viernes."""
-    por_dia = defaultdict(list)
+    """Clases de 2 módulos con ventanas libres entre una y otra, de lunes a viernes.
+    Cada día se arma por separado dentro de cada jornada (diurna y vespertina)."""
+    grupos = defaultdict(list)
     for b in sorted(bloques, key=lambda b: (b.dia_semana, b.hora_inicio)):
         if b.dia_semana in DIAS_CLASES:
-            por_dia[b.dia_semana].append(b)
+            grupos[(b.dia_semana, jornada_de_bloque(b))].append(b)
     secuencias = []
-    for lista in por_dia.values():
+    for lista in grupos.values():
         seq = []
-        i = random.randint(0, 2)
+        # la jornada vespertina tiene pocos módulos: el desfase inicial se acota para no quedar fuera
+        i = random.randint(0, min(2, max(0, len(lista) - 2)))
         while i + 1 < len(lista):
             seq.append((lista[i], lista[i + 1]))
             i += MODULOS_POR_SESION + random.randint(VENTANA_MIN, VENTANA_MAX)
@@ -1126,6 +1134,73 @@ def listar_bloques_horario(db: Session = Depends(get_db), _: models.Usuario = De
 # 3. ALGORITMO Y EDITOR DE SINÓPTICOS
 # ===========================================================================
 
+def valor_jornada(j):
+    return j.value if hasattr(j, "value") else str(j).lower()
+
+
+def validar_bloques_de_jornada(db: Session, jornada_val: str):
+    """Falla con un mensaje claro si no hay bloques horarios cargados para esa jornada."""
+    if jornada_val == "mixta":
+        con_bloques = {valor_jornada(j) for (j,) in db.query(models.BloqueHorario.jornada).distinct().all()}
+        if not {"diurno", "vespertino"}.issubset(con_bloques):
+            raise HTTPException(
+                status_code=400,
+                detail="Un sinóptico mixto necesita bloques diurnos y vespertinos cargados. "
+                       "Ejecuta bloques_vespertinos.sql en Supabase.",
+            )
+    elif not db.query(models.BloqueHorario.id).filter(models.BloqueHorario.jornada == jornada_val).first():
+        raise HTTPException(
+            status_code=400,
+            detail=f"No hay bloques horarios de jornada {jornada_val} cargados. "
+                   "Para la vespertina ejecuta bloques_vespertinos.sql en Supabase.",
+        )
+
+
+class JornadaUpdateRequest(schemas.Estricto):
+    jornada: str
+
+    @field_validator("jornada")
+    @classmethod
+    def _jornada_valida(cls, v):
+        v = (v or "").strip().lower()
+        if v not in {"diurno", "vespertino", "mixta"}:
+            raise ValueError("La jornada debe ser diurno, vespertino o mixta.")
+        return v
+
+
+@app.patch("/api/sinopticos/{sinoptico_id}/jornada")
+def cambiar_jornada_sinoptico(
+    sinoptico_id: int,
+    datos: JornadaUpdateRequest,
+    db: Session = Depends(get_db),
+    usuario: models.Usuario = Depends(require_coordinador),
+):
+    """Cambia la jornada de un sinóptico VACÍO (p. ej. uno creado diurno que se quiere vespertino o mixto)."""
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
+    asegurar_sinoptico_editable(sinoptico, usuario)
+    anterior = valor_jornada(sinoptico.jornada)
+    if datos.jornada == anterior:
+        return {"ok": True, "jornada": anterior}
+    if db.query(models.SinopticoItem.id).filter(models.SinopticoItem.sinoptico_id == sinoptico_id).first():
+        raise HTTPException(
+            status_code=409,
+            detail="Solo se puede cambiar la jornada de un sinóptico vacío. Este ya tiene clases: crea otro sinóptico para la otra jornada.",
+        )
+    validar_bloques_de_jornada(db, datos.jornada)
+    sinoptico.jornada = models.JornadaTipo(datos.jornada)
+    registrar_cambio(db, usuario, "jornada_cambiada", "sinoptico",
+                     f"Cambió la jornada del sinóptico vacío de {anterior} a {datos.jornada}",
+                     sinoptico_id=sinoptico_id)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"Ya existe un sinóptico {datos.jornada} con esa carrera/semestre.")
+    return {"ok": True, "jornada": datos.jornada}
+
+
 class CrearSinopticoConNivel(schemas.GenerarSinopticoRequest):
     # Nivel de la malla al que pertenece (para agrupar secciones aunque el sinóptico aún esté vacío)
     nivel_semestral: Optional[int] = None
@@ -1174,6 +1249,7 @@ def generar_sinoptico(
     usuario: models.Usuario = Depends(require_coordinador)
 ):
     """Generación automática asignando bloques respetando la disponibilidad docente sin choques horarios."""
+    advertencias = []
 
     # 0. ¿Se pidió generar DENTRO de un sinóptico existente?
     sinoptico_existente = None
@@ -1182,9 +1258,31 @@ def generar_sinoptico(
         if not sinoptico_existente:
             raise HTTPException(status_code=404, detail="El sinóptico indicado no existe.")
         asegurar_sinoptico_editable(sinoptico_existente, usuario)
-        # Carrera y jornada son las del sinóptico, no las del filtro
         datos.carrera_id = sinoptico_existente.carrera_id
-        datos.jornada = sinoptico_existente.jornada
+        # La jornada pedida solo cambia el sinóptico si está VACÍO (p. ej. uno diurno vacío que se quiere
+        # vespertino o mixto). Si ya tiene clases, se completa en su jornada actual y se avisa.
+        pedida = valor_jornada(datos.jornada)
+        actual = valor_jornada(sinoptico_existente.jornada)
+        if pedida != actual:
+            tiene_clases = db.query(models.SinopticoItem.id).filter(
+                models.SinopticoItem.sinoptico_id == sinoptico_existente.id
+            ).first() is not None
+            if tiene_clases:
+                advertencias.append(
+                    f"El sinóptico ya tiene clases en jornada {actual}, así que se completó en esa jornada. "
+                    f"Para generar en {pedida} crea otro sinóptico."
+                )
+                datos.jornada = sinoptico_existente.jornada
+            else:
+                validar_bloques_de_jornada(db, pedida)
+                sinoptico_existente.jornada = models.JornadaTipo(pedida)
+                try:
+                    db.flush()
+                except IntegrityError:
+                    db.rollback()
+                    raise HTTPException(status_code=409, detail=f"Ya existe un sinóptico {pedida} con esa carrera/semestre.")
+        else:
+            datos.jornada = sinoptico_existente.jornada
 
     if not sinoptico_existente:
         validar_carrera_semestre(db, datos.carrera_id, datos.semestre_id)
@@ -1211,6 +1309,10 @@ def generar_sinoptico(
     # 2. Convertir el valor de jornada de forma segura
     jornada_val = datos.jornada.value if hasattr(datos.jornada, 'value') else str(datos.jornada).lower()
     es_mixta = jornada_val == "mixta"
+
+    # Verificar que existan bloques horarios de esa jornada (antes: si no había, se usaban
+    # los diurnos en silencio y un sinóptico vespertino quedaba con horarios de día).
+    validar_bloques_de_jornada(db, jornada_val)
 
     # 3. Crear el registro del sinóptico
     # Solo una generación a la vez: el algoritmo lee la ocupación de profesores y salas y luego guarda,
@@ -1253,11 +1355,6 @@ def generar_sinoptico(
             models.BloqueHorario.jornada == jornada_val
         ).order_by(models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio).all()
 
-        if not bloques:
-            bloques = db.query(models.BloqueHorario).order_by(
-                models.BloqueHorario.dia_semana, models.BloqueHorario.hora_inicio
-            ).all()
-
     profesores = db.query(models.Profesor).filter(models.Profesor.activo == True).all()
     salas = db.query(models.Sala).filter(models.Sala.activo == True).all()
 
@@ -1269,6 +1366,19 @@ def generar_sinoptico(
     profesor_disponible_map = defaultdict(set)
     for disp in disponibilidades:
         profesor_disponible_map[disp.profesor_id].add(disp.bloque_horario_id)
+
+    # Un profesor sin ningún registro de disponibilidad se considera disponible; uno con registros
+    # solo puede tomar los bloques donde marcó disponibilidad. Si ninguno puede tomar los bloques
+    # de esta jornada, el sinóptico saldría vacío: se avisa en vez de fallar sin explicación.
+    ids_bloques_jornada = {b.id for b in bloques}
+    if not any(
+        (p.id not in profesor_disponible_map) or (profesor_disponible_map[p.id] & ids_bloques_jornada)
+        for p in profesores
+    ):
+        advertencias.append(
+            f"Ningún profesor tiene disponibilidad cargada en los bloques de la jornada {jornada_val}. "
+            "Sube la disponibilidad vespertina o márcala a mano en Disponibilidad docente."
+        )
 
     profesor_ocupado = defaultdict(set)
     sala_ocupada = defaultdict(set)
@@ -1355,20 +1465,29 @@ def generar_sinoptico(
         ))
         candidatos_sala = sorted(salas, key=lambda s: sala_carga[s.id])
         dias_del_ramo = set()
+        jornada_del_ramo = None   # en un sinóptico mixto, todas las clases de un ramo van en la misma jornada
         colocadas = 0
 
         for tam in tamanos_sesiones(asignatura):
             if tam == 1:
                 # sesión de 1 módulo (cuando las horas son impares): cualquier bloque libre
                 libres = [x for x in todos_los_simples if x[0].dia_semana in DIAS_CLASES and x[0].id not in bloques_usados]
-                libres.sort(key=lambda x: (x[0].dia_semana in dias_del_ramo, carga_dia[x[0].dia_semana]))
+                libres.sort(key=lambda x: (
+                    jornada_del_ramo is not None and jornada_de_bloque(x[0]) != jornada_del_ramo,
+                    x[0].dia_semana in dias_del_ramo, carga_dia[x[0].dia_semana]))
                 respaldo = [x for x in todos_los_simples if x[0].id not in bloques_usados]
-                respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
+                respaldo.sort(key=lambda x: (
+                    jornada_del_ramo is not None and jornada_de_bloque(x[0]) != jornada_del_ramo,
+                    x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
             else:
                 libres = [x for x in ranuras if not any(b.id in bloques_usados for b in x)]
-                libres.sort(key=lambda x: x[0].dia_semana in dias_del_ramo)  # días distintos primero
+                libres.sort(key=lambda x: (
+                    jornada_del_ramo is not None and jornada_de_bloque(x[0]) != jornada_del_ramo,
+                    x[0].dia_semana in dias_del_ramo))  # misma jornada y días distintos primero
                 respaldo = [x for x in todas_las_sesiones if not any(b.id in bloques_usados for b in x)]
-                respaldo.sort(key=lambda x: (x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
+                respaldo.sort(key=lambda x: (
+                    jornada_del_ramo is not None and jornada_de_bloque(x[0]) != jornada_del_ramo,
+                    x[0].dia_semana > 5, carga_dia[x[0].dia_semana]))
 
             for sesion in libres + respaldo:
                 r = asignar_sesion(sesion, asignatura, candidatos_prof, candidatos_sala)
@@ -1378,6 +1497,8 @@ def generar_sinoptico(
                     candidatos_prof = [p] + [x for x in candidatos_prof if x.id != p.id]
                     candidatos_sala = [s] + [x for x in candidatos_sala if x.id != s.id]
                     dias_del_ramo.add(sesion[0].dia_semana)
+                    if jornada_del_ramo is None:
+                        jornada_del_ramo = jornada_de_bloque(sesion[0])
                     colocadas += 1
                     break
 
@@ -1388,7 +1509,8 @@ def generar_sinoptico(
         db.commit()
         db.refresh(nuevo_sinoptico)
         registrar_cambio(db, usuario, "sinoptico_generado", "sinoptico",
-                         "Generó automáticamente las asignaturas faltantes" if sinoptico_existente else "Generó el sinóptico automáticamente",
+                         (f"Generó automáticamente las asignaturas faltantes (jornada {jornada_val})" if sinoptico_existente
+                          else f"Generó el sinóptico automáticamente (jornada {jornada_val})"),
                          sinoptico_id=nuevo_sinoptico.id)
         db.commit()
     except IntegrityError:
@@ -1408,7 +1530,23 @@ def generar_sinoptico(
 
     return {
         "sinoptico_id": nuevo_sinoptico.id,
-        "asignaturas_sin_asignar": sin_asignar
+        "asignaturas_sin_asignar": sin_asignar,
+        "advertencias": advertencias,
+    }
+
+
+def datos_ultima_modificacion(registro, nombres_usuarios):
+    """Quién y cuándo modificó por última vez un sinóptico (None si no hay cambios registrados)."""
+    if registro is None:
+        return {"modificado_por": None, "modificado_en": None, "ultima_accion": None}
+    nombre = nombres_usuarios.get(registro.usuario_id)
+    if not nombre:
+        # usuario eliminado: queda el texto guardado en la bitácora ("Nombre (correo)")
+        nombre = (registro.usuario_nombre or "").split(" (")[0] or None
+    return {
+        "modificado_por": nombre,
+        "modificado_en": registro.creado_en,
+        "ultima_accion": registro.detalle,
     }
 
 
@@ -1452,7 +1590,20 @@ def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = D
     for p in db.query(models.PlanEstudio).filter(models.PlanEstudio.activo == True).all():
         planes_carrera[p.carrera_id].append(p.id)
 
+    # Última modificación de cada sinóptico, según la bitácora (un solo registro por sinóptico)
+    ultimos_ids = (
+        db.query(func.max(models.RegistroCambio.id))
+        .filter(models.RegistroCambio.sinoptico_id.isnot(None))
+        .group_by(models.RegistroCambio.sinoptico_id)
+        .scalar_subquery()
+    )
+    ultima_por_sin = {
+        r.sinoptico_id: r
+        for r in db.query(models.RegistroCambio).filter(models.RegistroCambio.id.in_(ultimos_ids)).all()
+    }
+
     ids_autores = {sin.creado_por_id for sin, _, _ in filas if sin.creado_por_id is not None}
+    ids_autores |= {r.usuario_id for r in ultima_por_sin.values() if r.usuario_id is not None}
     nombres_usuarios = (
         {uid: nombre for uid, nombre in db.query(models.Usuario.id, models.Usuario.nombre).filter(models.Usuario.id.in_(ids_autores)).all()}
         if ids_autores else {}
@@ -1491,8 +1642,35 @@ def listar_sinopticos(db: Session = Depends(get_db), usuario: models.Usuario = D
             "creado_por_id": sinoptico.creado_por_id,
             "creado_por": nombres_usuarios.get(sinoptico.creado_por_id),
             "es_mio": sinoptico.creado_por_id is not None and sinoptico.creado_por_id == usuario.id,
+            **datos_ultima_modificacion(ultima_por_sin.get(sinoptico.id), nombres_usuarios),
         })
     return resultado
+
+
+@app.get("/api/sinopticos/{sinoptico_id}/ultima-modificacion")
+def ultima_modificacion_sinoptico(
+    sinoptico_id: int,
+    db: Session = Depends(get_db),
+    _: models.Usuario = Depends(require_coordinador),
+):
+    """Autor, última modificación y cantidad de cambios de un sinóptico (liviano: se consulta tras cada edición)."""
+    sinoptico = db.query(models.Sinoptico).filter(models.Sinoptico.id == sinoptico_id).first()
+    if not sinoptico:
+        raise HTTPException(status_code=404, detail="Sinóptico no encontrado.")
+    ultimo = db.query(models.RegistroCambio).filter(
+        models.RegistroCambio.sinoptico_id == sinoptico_id
+    ).order_by(models.RegistroCambio.id.desc()).first()
+    total = db.query(func.count(models.RegistroCambio.id)).filter(
+        models.RegistroCambio.sinoptico_id == sinoptico_id
+    ).scalar() or 0
+    ids = {i for i in (sinoptico.creado_por_id, ultimo.usuario_id if ultimo else None) if i is not None}
+    nombres = {uid: n for uid, n in db.query(models.Usuario.id, models.Usuario.nombre).filter(models.Usuario.id.in_(ids)).all()} if ids else {}
+    return {
+        "creado_por": nombres.get(sinoptico.creado_por_id),
+        "creado_en": sinoptico.creado_en,
+        "total_cambios": total,
+        **datos_ultima_modificacion(ultimo, nombres),
+    }
 
 
 @app.get("/api/sinopticos/{sinoptico_id}/filtros")

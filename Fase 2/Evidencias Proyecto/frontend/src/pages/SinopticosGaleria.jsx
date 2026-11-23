@@ -22,6 +22,26 @@ const MODULOS_DUOC = [
   { id: 13, label: '17:31 A 18:10' },
 ]
 
+// Módulos de la previsualización según la jornada del sinóptico: el diurno usa la tabla fija,
+// el vespertino se arma con los bloques vespertinos cargados en la base y el mixto muestra ambos.
+const etiquetaModulo = (b) => `${b.hora_inicio.slice(0, 5)} A ${b.hora_fin.slice(0, 5)}`
+
+function modulosDeJornada(bloques, jornada) {
+  const j = String(jornada || 'diurno').toLowerCase()
+  if (j === 'diurno') return MODULOS_DUOC
+  const vistos = new Map()
+  bloques.filter(b => b.jornada === 'vespertino').forEach(b => {
+    const label = etiquetaModulo(b)
+    if (!vistos.has(label)) vistos.set(label, b.hora_inicio.slice(0, 5))
+  })
+  const vespertinos = [...vistos.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([label], i) => ({ id: (j === 'mixta' ? MODULOS_DUOC.length : 0) + i + 1, label }))
+  return j === 'mixta' ? [...MODULOS_DUOC, ...vespertinos] : vespertinos
+}
+
+const fechaLocal = (f) => (f ? new Date(f + (String(f).endsWith('Z') ? '' : 'Z')).toLocaleString('es-CL') : '')
+
 const DIAS_SEMANA = [
   { key: 1, nombre: 'Lunes' },
   { key: 2, nombre: 'Martes' },
@@ -35,6 +55,7 @@ export default function SinopticosGaleria() {
   const navigate = useNavigate()
   const [sinopticos, setSinopticos] = useState([])
   const [eventosPorSinoptico, setEventosPorSinoptico] = useState({})
+  const [bloquesHorario, setBloquesHorario] = useState([])
   const [cargando, setCargando] = useState(true)
   // 'todos' | 'mios' (pestaña "Hechos por mí")
   const [pestana, setPestana] = useState('todos')
@@ -46,11 +67,13 @@ export default function SinopticosGaleria() {
         // /sinopticos/{id}/eventos en paralelo. Con muchos sinópticos eso son
         // decenas de queries al backend. Ahora: 1 request a /sinopticos y
         // 1 sola request batch a /sinopticos/eventos que trae todo agrupado.
-        const [resSinopticos, resEventos] = await Promise.all([
+        const [resSinopticos, resEventos, resBloques] = await Promise.all([
           api.get('/sinopticos'),
           api.get('/sinopticos/eventos'),
+          api.get('/bloques-horario'),
         ])
         setSinopticos(resSinopticos.data)
+        setBloquesHorario(resBloques.data || [])
         setEventosPorSinoptico(resEventos.data || {})
       } catch (err) {
         console.error('Error al cargar sinópticos:', err)
@@ -167,6 +190,7 @@ export default function SinopticosGaleria() {
                   <div style={{ display: 'flex', flexWrap: 'nowrap', gap: '14px', marginTop: '8px' }}>
                     {lista.map(s => {
                 const eventos = eventosPorSinoptico[String(s.id)] || []
+                const modulos = modulosDeJornada(bloquesHorario, s.jornada)
                 return (
                   <div key={s.id} className="duoc-card" style={{ width: '220px', minWidth: '220px', flexShrink: 0, padding: '10px' }}>
                     <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--duoc-navy)' }}>
@@ -175,8 +199,16 @@ export default function SinopticosGaleria() {
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                       {s.jornada ? s.jornada.charAt(0).toUpperCase() + s.jornada.slice(1) : ''} · {eventos.length} clase{eventos.length !== 1 ? 's' : ''}
                     </div>
-                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
                       {s.es_mio ? 'Hecho por ti' : s.creado_por ? `Hecho por ${s.creado_por}` : 'Autor sin registrar'}
+                    </div>
+                    <div
+                      style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '8px' }}
+                      title={s.ultima_accion || ''}
+                    >
+                      {s.modificado_por
+                        ? `Modificado por ${s.modificado_por}${s.modificado_en ? ` · ${fechaLocal(s.modificado_en)}` : ''}`
+                        : 'Sin modificaciones registradas'}
                     </div>
 
                     {/* Mini previsualización: un cuadradito por módulo/día, relleno si está ocupado */}
@@ -190,7 +222,14 @@ export default function SinopticosGaleria() {
                         </tr>
                       </thead>
                       <tbody>
-                        {MODULOS_DUOC.map(m => (
+                        {modulos.length === 0 && (
+                          <tr>
+                            <td colSpan={DIAS_SEMANA.length + 1} style={{ fontSize: '9px', color: '#b02a2a', textAlign: 'center', padding: '10px 2px' }}>
+                              Sin bloques {s.jornada} cargados
+                            </td>
+                          </tr>
+                        )}
+                        {modulos.map(m => (
                           <tr key={m.id}>
                             <td style={{ fontSize: '7px', color: 'var(--text-muted)', textAlign: 'right', paddingRight: '2px' }}>{m.id}</td>
                             {DIAS_SEMANA.map(d => {

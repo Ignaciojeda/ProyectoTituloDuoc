@@ -23,6 +23,28 @@ const MODULOS_DUOC = [
   { id: 13, label: '17:31 A 18:10' },
 ]
 
+// Módulos de la grilla según la jornada del sinóptico. El diurno usa la tabla fija de arriba;
+// el vespertino se arma con los bloques vespertinos cargados en la base (sus horas reales),
+// y el mixto muestra los diurnos seguidos de los vespertinos.
+const etiquetaModulo = (b) => `${b.hora_inicio.slice(0, 5)} A ${b.hora_fin.slice(0, 5)}`
+
+function modulosDeJornada(bloques, jornada) {
+  const j = String(jornada || 'diurno').toLowerCase()
+  if (j === 'diurno') return MODULOS_DUOC
+  const vistos = new Map()
+  bloques.filter(b => b.jornada === 'vespertino').forEach(b => {
+    const label = etiquetaModulo(b)
+    if (!vistos.has(label)) vistos.set(label, b.hora_inicio.slice(0, 5))
+  })
+  const vespertinos = [...vistos.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([label], i) => ({ id: (j === 'mixta' ? MODULOS_DUOC.length : 0) + i + 1, label }))
+  return j === 'mixta' ? [...MODULOS_DUOC, ...vespertinos] : vespertinos
+}
+
+// Fecha del servidor (UTC sin zona) -> hora local de Chile
+const fechaLocal = (f) => (f ? new Date(f + (String(f).endsWith('Z') ? '' : 'Z')).toLocaleString('es-CL') : '')
+
 const DIAS_SEMANA = [
   { key: 1, nombre: 'Lunes' },
   { key: 2, nombre: 'Martes' },
@@ -240,8 +262,19 @@ export default function SinopticoPage() {
     }
   }, [searchParams])
 
+  // Quién creó y quién modificó por última vez el sinóptico (se refresca tras cada edición)
+  const cargarUltimaModif = async (id) => {
+    try {
+      const { data } = await api.get(`/sinopticos/${id}/ultima-modificacion`)
+      setUltimaModif(prev => ({ ...prev, [id]: data }))
+    } catch (err) {
+      console.error('No se pudo cargar la última modificación:', err)
+    }
+  }
+
   const cargarEventosSinoptico = async (id) => {
     cargarHorasSinoptico(id) // en paralelo con los eventos
+    cargarUltimaModif(id)
     try {
       const { data } = await api.get(`/sinopticos/${id}/eventos`)
       setEventos(data)
@@ -337,6 +370,25 @@ export default function SinopticoPage() {
     }
   }
 
+  // Al cambiar la jornada con un sinóptico VACÍO abierto, el sinóptico mismo pasa a esa jornada
+  // (así se puede generar o armar a mano en vespertino/mixto). Si ya tiene clases, solo cambia el filtro.
+  const cambiarJornadaSelector = async (valor) => {
+    const anterior = jornadaSel
+    setJornadaSel(valor)
+    if (!sinopticoSel || !sinopticoActual || eventos.length > 0) return
+    if (String(sinopticoActual.jornada).toLowerCase() === valor) return
+    if (finalizadoSel) { avisarFinalizado(); setJornadaSel(anterior); return }
+    try {
+      await api.patch(`/sinopticos/${sinopticoSel}/jornada`, { jornada: valor })
+      setSinopticosExistentes(prev => prev.map(x => String(x.id) === String(sinopticoSel) ? { ...x, jornada: valor } : x))
+      cargarUltimaModif(sinopticoSel)
+      setMensaje(`Sinóptico #${sinopticoSel} cambiado a jornada ${valor}. Ya puedes generarlo o armarlo a mano.`)
+    } catch (err) {
+      setJornadaSel(anterior)
+      setMensaje(err.response?.data?.detail || 'No se pudo cambiar la jornada del sinóptico.')
+    }
+  }
+
   const handleGenerarAuto = async () => {
     if (!planSel || !semestreSel) {
       setMensaje('Debe seleccionar plan de estudio y semestre.')
@@ -362,9 +414,13 @@ export default function SinopticoPage() {
         nivel_semestral: nivelSel ? parseInt(nivelSel) : null,
         sinoptico_id: rellenarId,
       })
-      setMensaje(rellenarId
+      const avisos = (data.advertencias || []).join(' ')
+      const faltan = (data.asignaturas_sin_asignar || []).length
+        ? ` No se pudieron ubicar: ${data.asignaturas_sin_asignar.join(', ')}.`
+        : ''
+      setMensaje((rellenarId
         ? `Sinóptico #${data.sinoptico_id} completado correctamente.`
-        : `Sinóptico #${data.sinoptico_id} generado correctamente.`)
+        : `Sinóptico #${data.sinoptico_id} generado correctamente.`) + faltan + (avisos ? ` ⚠ ${avisos}` : ''))
       setSinopticoSel(data.sinoptico_id)
       cargarEventosSinoptico(data.sinoptico_id)
 
@@ -429,6 +485,7 @@ export default function SinopticoPage() {
         api.get(`/sinopticos/${s.id}/eventos`)
           .then(({ data }) => { if (!cancelado) setEventosHermanos(prev => ({ ...prev, [s.id]: data })) })
           .catch(err => console.error(`Error al cargar eventos del sinóptico ${s.id}:`, err))
+        cargarUltimaModif(s.id)
       })
     return () => { cancelado = true }
   }, [idsSeccionesKey, sinopticoSel])
@@ -564,6 +621,7 @@ export default function SinopticoPage() {
     return `${dia} ${String(e.startTime || '').slice(0, 5)}`
   }
 
+  const [ultimaModif, setUltimaModif] = useState({}) // id de sinóptico -> { creado_por, modificado_por, modificado_en, ... }
   const [verHistorial, setVerHistorial] = useState(false)
   const [historial, setHistorial] = useState([])
   const [cargandoHistorial, setCargandoHistorial] = useState(false)
@@ -943,6 +1001,8 @@ export default function SinopticoPage() {
     const eventosPanel = (!s || activo) ? eventos : (eventosHermanos[s.id] || [])
     const fin = !s ? false : (activo ? finalizadoSel : Boolean(s.finalizado))
     const jornadaPanel = String(s?.jornada || jornadaSel || 'diurno')
+    const modulosPanel = modulosDeJornada(bloquesHorario, jornadaPanel)
+    const infoModif = s ? (ultimaModif[s.id] || s) : null
     const nivelPanel = s ? (s.nivel_semestral > 0 ? s.nivel_semestral : '') : nivelSel
     const variasSecciones = seccionesCarrera.length > 1
     return (
@@ -1002,6 +1062,15 @@ export default function SinopticoPage() {
               ? ' · Sinóptico finalizado: bloqueado para edición'
               : ' · Haga click en una celda vacía para agregar un ramo · Arrastre los bloques para cambiar de horario'}
           </span>
+          {s && infoModif && (
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+              Creado por <strong>{infoModif.creado_por || 'sin registro'}</strong>
+              {infoModif.creado_en ? ` el ${fechaLocal(infoModif.creado_en)}` : ''}
+              {' · '}Última modificación: <strong>{infoModif.modificado_por || 'sin cambios registrados'}</strong>
+              {infoModif.modificado_en ? ` el ${fechaLocal(infoModif.modificado_en)}` : ''}
+              {infoModif.ultima_accion ? ` (${infoModif.ultima_accion})` : ''}
+            </div>
+          )}
         </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'sans-serif', tableLayout: 'fixed' }}>
@@ -1017,7 +1086,14 @@ export default function SinopticoPage() {
               </tr>
             </thead>
             <tbody>
-              {MODULOS_DUOC.map((m) => (
+              {modulosPanel.length === 0 && (
+                <tr>
+                  <td colSpan={DIAS_SEMANA.length + 2} style={{ padding: '14px', textAlign: 'center', color: '#b02a2a', fontSize: '12px' }}>
+                    No hay bloques horarios de jornada {jornadaPanel} cargados. Ejecuta bloques_vespertinos.sql en Supabase.
+                  </td>
+                </tr>
+              )}
+              {modulosPanel.map((m) => (
                 <tr key={m.id} style={{ backgroundColor: m.id % 2 === 0 ? '#f8fafc' : '#ffffff', height: '24px' }}>
                   <td style={{ padding: '1px 2px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: 'bold', color: 'var(--duoc-navy)', fontSize: '10px' }}>
                     {m.id}
@@ -1222,7 +1298,7 @@ export default function SinopticoPage() {
 
             <div className="duoc-form-group" style={{ marginBottom: '10px' }}>
               <label className="duoc-label" style={{ fontSize: '11px' }}>Jornada</label>
-              <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={jornadaSel} onChange={e => setJornadaSel(e.target.value)}>
+              <select className="duoc-select" style={{ padding: '6px 8px', fontSize: '12px' }} value={jornadaSel} onChange={e => cambiarJornadaSelector(e.target.value)}>
                 {jornadas.length > 0 ? (
                   jornadas.map(j => (
                     <option key={j.id} value={j.nombre.toLowerCase()}>
@@ -1868,7 +1944,7 @@ export default function SinopticoPage() {
             {historial.map(h => (
               <div key={h.id} style={{ borderTop: '1px solid #eef1f5', padding: '8px 0', fontSize: '12px' }}>
                 <div style={{ color: 'var(--text-muted)' }}>
-                  {h.fecha ? new Date(h.fecha + (h.fecha.endsWith('Z') ? '' : 'Z')).toLocaleString('es-CL') : ''} · <strong>{h.usuario}</strong>
+                  {fechaLocal(h.fecha)} · <strong>{h.usuario}</strong>
                 </div>
                 <div>{h.detalle}</div>
               </div>
