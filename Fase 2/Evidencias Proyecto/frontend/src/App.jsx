@@ -8,7 +8,7 @@ import SinopticoPage from './pages/SinopticoPage'
 import SinopticosGaleria from './pages/SinopticosGaleria'
 import SalasGaleria from './pages/SalasGaleria'
 import SalaHorarioPage from './pages/SalaHorarioPage'
-import DocenteHorarioPage from './pages/DocenteHorarioPage'
+import DocenteHorarioPage from './pages/Docentehorariopage'
 import ProtectedRoute from './components/ProtectedRoute'
 import ProfesorDisponibilidadPage from './pages/Profesordisponibilidadpage'
 

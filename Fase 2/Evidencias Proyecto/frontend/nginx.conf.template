@@ -1,0 +1,46 @@
+# Si el proxy de delante (Azure) ya indicó http/https, se respeta; si no, se usa el esquema local
+map $http_x_forwarded_proto $esquema_cliente {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    resolver 168.63.129.16 valid=10s;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+
+    client_max_body_size 6m;          # el backend acepta Excel de hasta 5 MB
+
+    # API: se reenvía al backend. API_UPSTREAM = http://api en Azure, http://api:8000 en docker compose.
+    # IMPORTANTE: NO se redefine la cabecera Host. En Azure Container Apps el proxy decide a qué app
+    # enviar la petición según el Host; si se pusiera el dominio público, la petición volvería a la web.
+    location /api/ {
+        set $upstream_api ${API_UPSTREAM};
+        proxy_pass $upstream_api;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $esquema_cliente;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 120s;      # generar un sinóptico puede tardar
+    }
+
+    # Archivos compilados (nombres con hash): caché larga.
+    # (No usar add_header dentro de un location: anularía las cabeceras de seguridad de arriba)
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+    }
+
+    # Aplicación de una sola página: cualquier otra ruta devuelve index.html (React Router decide)
+    location / {
+        try_files $uri /index.html;
+        expires -1;                   # index.html siempre se revalida (así una versión nueva se ve al tiro)
+    }
+}
